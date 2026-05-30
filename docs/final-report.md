@@ -46,6 +46,28 @@ optional backends later.
 
 ## Verification
 
-The final verification commands and commit details are recorded in the operational report under
-`/data/var/codex_logs`.
+Final verification was run on the Jetson default Python 3.8 environment:
+
+```bash
+python -m compileall -q src tests
+python -m pytest -q tests/test_placeholder_coverage.py \
+  tests/test_workflow_outputs.py::test_content_signature_overrides_misleading_extension \
+  tests/test_workflow_outputs.py::test_archive_listing_is_safe_and_manifested
+python -m pytest -q
+```
+
+Results:
+
+- compile check: passed
+- targeted tests: `14 passed`
+- full tests: `24 passed`
+
+Initial implementation commit:
+
+```text
+d40e138 Bootstrap all2text package
+```
+
+The initial commit was pushed to `origin/master`. The operational report is stored under
+`/data/var/codex_logs/all2text_bootstrap_20260530.md`.
 
