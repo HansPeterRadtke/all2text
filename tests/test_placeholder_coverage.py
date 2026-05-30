@@ -32,15 +32,15 @@ def _write_sqlite(path: Path) -> None:
 @pytest.mark.parametrize(
     ("filename", "payload", "expected_category", "expected_converter", "expected_text"),
     [
-        ("image.png", PNG_1X1, "image", "image_placeholder_backend", "Image safe summary"),
+        ("image.png", PNG_1X1, "image", "image_analysis_backend", "Provider route:"),
         (
             "audio.wav",
             b"RIFF$\x00\x00\x00WAVEfmt " + b"\x10\x00\x00\x00\x01\x00\x01\x00" + b"\x40\x1f\x00\x00",
             "audio",
-            "media_metadata_backend",
-            "Media safe summary",
+            "media_analysis_backend",
+            "Layered stages:",
         ),
-        ("video.mp4", b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42", "video", "media_metadata_backend", "Media safe summary"),
+        ("video.mp4", b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42", "video", "media_analysis_backend", "Layered stages:"),
         ("doc.pdf", b"%PDF-1.4\n1 0 obj\n<< /Type /Page >>\n%%EOF\n", "document", "document_placeholder_backend", "Document safe summary"),
         ("data.h5", b"\x89HDF\r\n\x1a\n" + b"\x00" * 32, "scientific_data", "scientific_placeholder_backend", "Scientific data safe summary"),
         ("drawing.dwg", b"\x00DWG-binary-placeholder\x00", "cad_or_technical", "cad_placeholder_backend", "CAD/technical safe summary"),

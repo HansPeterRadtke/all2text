@@ -41,7 +41,13 @@ The test suite covers:
 - symlink safety;
 - deterministic collision handling;
 - CLI and public API behavior;
-- registry selection;
+- config parsing, custom provider parameters, and CLI config usage;
+- registry selection and configurable backend overrides;
+- native DOCX/XLSX/PPTX/PDF extraction when optional dependencies are visible to the test
+  interpreter;
+- optional dependency fallback behavior;
+- image provider routing without requiring a model server;
+- layered audio/video stage reporting;
 - placeholder coverage for image, audio, video, document, scientific, geospatial, CAD, database,
   email, ebook, font, executable, and container categories.
 

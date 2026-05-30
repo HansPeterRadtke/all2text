@@ -90,6 +90,7 @@ class ConversionContext:
     source_root: Path
     target_root: Path
     options: RunOptions
+    config: Any | None = None
 
 
 @dataclass

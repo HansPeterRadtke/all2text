@@ -3,11 +3,10 @@
 Near-term:
 
 - MarkItDown backend for broad document extraction.
-- Native PDF backend with pypdf and optional OCR fallback.
-- Native DOCX/XLSX/PPTX backends derived from the proven `rag_tests` extraction patterns.
-- Optional image OCR backend with confidence filtering.
-- Better HTML visible-text extraction while preserving raw markup as source.
-- Provider status plumbing for local llama.cpp text and vision endpoints.
+- OCR confidence filtering and preprocessing for the current configurable Tesseract path.
+- Optional PDF scanned-page rendering/OCR fallback with bounded external commands.
+- More complete OpenDocument spreadsheet/presentation handling.
+- Provider execution adapters for chart specialists and document intelligence.
 - Geospatial schema/layer probes for GeoPackage and Shapefile with read-only libraries.
 
 Medium-term:

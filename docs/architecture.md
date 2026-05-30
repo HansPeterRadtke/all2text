@@ -30,11 +30,13 @@ otherwise become an input on future runs.
 src/all2text/
   api.py              public run() entrypoint
   cli.py              argparse CLI
+  config.py           TOML/default config loading and module/provider settings
   core.py             orchestration
   detection.py        layered type detection and classification
   metadata.py         filesystem/content metadata collection
   models.py           dataclasses and runtime options
   planning.py         output path planning and collision naming
+  providers.py        provider status, route plans, optional local HTTP/VLM calls
   registry.py         backend registry
   rendering.py        per-file text wrapper
   reporting.py        manifest/report summaries
@@ -56,8 +58,42 @@ The default registry is ordered from more structural handling to broad fallback 
   executables, disk/container images;
 - binary fallback.
 
-Custom registries can insert a backend before a placeholder to provide real extraction for a format
-without changing the scan/plan/render/report contract.
+Configuration can also choose a backend per family or format key through `[modules]` in a TOML file.
+The configured backend still has to accept the entry's classification. If it does not, selection
+falls back through the ordered registry. Custom registries can still insert a backend before a broad
+fallback to provide real extraction for a format without changing the scan/plan/render/report
+contract.
+
+## Provider Layer
+
+Optional engines are modeled separately from converter backends:
+
+- OCR providers;
+- OpenAI-compatible local VLM/text providers, including llama.cpp servers;
+- chart specialists;
+- document intelligence;
+- speech/transcription/language detection;
+- video frame sampling and frame OCR/VLM.
+
+Backends record provider status and route plans even when a provider is disabled or unavailable.
+Provider output is only marked as used when the provider actually returns accepted content. This is
+why image and media conversion can be useful today without claiming OCR, chart values, speech
+transcripts, or VLM captions that were not produced.
+
+## Native Document Paths
+
+The document backend uses optional libraries when present:
+
+- `python-docx` for DOCX properties, paragraph/table order, sections, headers/footers, hyperlinks,
+  raw WordprocessingML paragraph counts, and embedded-image counts;
+- `openpyxl` for XLSX sheets, hidden sheets, every non-empty cell, formulas, cached values when
+  available, tables, defined names, cross-sheet references, chart metadata, and image anchors;
+- `python-pptx` for PPTX slide geometry, shapes, text, notes, and embedded-image counts;
+- `pypdf` for PDF metadata, pages, native text, and image counts;
+- OpenDocument ZIP/content.xml parsing for ODT/ODS/ODP text nodes.
+
+If a dependency is absent or a parser fails, the backend returns a safe document summary and records
+the dependency or parser error in warnings and metadata.
 
 ## Collision Policy
 

@@ -62,6 +62,8 @@ Optional integrations should follow a strict truthfulness contract:
   was actually accepted.
 - If a VLM or local llama.cpp provider is used, record endpoint/model identifier, request mode, and
   whether the result came from the provider or a fallback.
+- If a provider is configured but not invoked, record that status separately from provider failure
+  and from successful provider use.
 - If ffprobe/ffmpeg is used, keep command timeouts and include stderr/exit warnings without failing
   the whole tree when a single media file is invalid.
 - If CAD, scientific, geospatial, database, or document-intelligence libraries are used, keep file
@@ -73,7 +75,8 @@ The registry is ready for:
 
 - Microsoft MarkItDown;
 - textract;
-- pypdf/python-docx/openpyxl/python-pptx native document backends;
+- MarkItDown/textract-style broad document backends in addition to the current
+  pypdf/python-docx/openpyxl/python-pptx native document paths;
 - Tesseract/PaddleOCR and document intelligence services;
 - `ffprobe` plus speech transcription;
 - local llama.cpp text and vision providers for VLM image descriptions and text synthesis;

@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from all2text.config import All2TextConfig, load_config
 from all2text.backends.binary import BinaryFallbackBackend
 from all2text.detection import classify_path
 from all2text.jsonsafe import json_dumps, to_jsonable
@@ -24,9 +25,12 @@ def run(
     *,
     options: RunOptions | None = None,
     registry: ConversionRegistry | None = None,
+    config: All2TextConfig | None = None,
 ) -> dict[str, Any]:
     started = time.monotonic()
-    options = options or RunOptions()
+    config = config or load_config()
+    options = options or config.options
+    config = config.with_options(options)
     source_root = Path(source_folder).expanduser()
     target_root = Path(target_folder).expanduser()
     if not source_root.exists():
@@ -46,8 +50,8 @@ def run(
     text_entries = [entry for entry in entries if entry.produces_text]
     dir_map, directory_collisions = create_target_directories(target_root, dir_entries)
     planned, planning_warnings = reserve_output_files(target_root, text_entries, dir_map)
-    ctx = ConversionContext(source_root=source_root, target_root=target_root, options=options)
-    registry = registry or build_default_registry()
+    ctx = ConversionContext(source_root=source_root, target_root=target_root, options=options, config=config)
+    registry = registry or build_default_registry(config)
 
     records: list[dict[str, Any]] = []
     for entry in entries:
@@ -74,7 +78,8 @@ def run(
             "copy_source_stat": options.copy_source_stat,
             "reject_target_inside_source": options.reject_target_inside_source,
         },
-        "registry": {"backends": registry.names()},
+        "config": config.to_dict(),
+        "registry": {"backends": registry.names(), "preferred_backends": registry.preferred_backends()},
         "directory_collisions": directory_collisions,
         "planning_warnings": planning_warnings,
         "summary": build_summary(records, entries, directory_collisions, planning_warnings, started),

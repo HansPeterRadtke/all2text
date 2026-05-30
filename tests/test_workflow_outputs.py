@@ -97,7 +97,7 @@ def test_content_signature_overrides_misleading_extension(tmp_path: Path) -> Non
     assert classification["rough_category"] == "image"
     assert classification["concrete_format"] == "PNG"
     assert "layer2_content_signature_override" in classification["evidence"]
-    assert record["converter_used"] == "image_placeholder_backend"
+    assert record["converter_used"] == "image_analysis_backend"
     assert (target / "actually_png.txt.txt").exists()
 
 

@@ -110,13 +110,32 @@ def parsed_text_metadata(text: str, classification: Classification) -> dict[str,
         return html_metadata(text)
     if fmt == "RTF":
         return rtf_metadata(text)
+    if fmt == "TOML":
+        return toml_metadata(text)
     if fmt == "IPYNB":
         try:
             data = json.loads(text)
             cells = data.get("cells", []) if isinstance(data, dict) else []
         except Exception as exc:
             return {"parse_status": "notebook_parse_failed", "error": str(exc)}
-        return {"parse_status": "ok", "cell_count": len(cells), "nbformat": data.get("nbformat")}
+        cell_types: dict[str, int] = {}
+        previews: list[dict[str, Any]] = []
+        for index, cell in enumerate(cells[:20], start=1):
+            if not isinstance(cell, dict):
+                continue
+            cell_type = str(cell.get("cell_type") or "unknown")
+            cell_types[cell_type] = cell_types.get(cell_type, 0) + 1
+            source = cell.get("source", "")
+            if isinstance(source, list):
+                source = "".join(str(item) for item in source)
+            previews.append({"index": index, "cell_type": cell_type, "source_preview": str(source)[:500]})
+        return {
+            "parse_status": "ok",
+            "cell_count": len(cells),
+            "cell_type_counts": cell_types,
+            "cell_previews": previews,
+            "nbformat": data.get("nbformat"),
+        }
     return {}
 
 
@@ -158,25 +177,39 @@ class _HTMLMetadataParser(HTMLParser):
         super().__init__()
         self.tag_counts: dict[str, int] = {}
         self._in_title = False
+        self._skip_depth = 0
         self._title_parts: list[str] = []
+        self._visible_parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.tag_counts[tag] = self.tag_counts.get(tag, 0) + 1
         if tag.casefold() == "title":
             self._in_title = True
+        if tag.casefold() in {"script", "style", "noscript"}:
+            self._skip_depth += 1
 
     def handle_endtag(self, tag: str) -> None:
         if tag.casefold() == "title":
             self._in_title = False
+        if tag.casefold() in {"script", "style", "noscript"} and self._skip_depth:
+            self._skip_depth -= 1
 
     def handle_data(self, data: str) -> None:
         if self._in_title:
             self._title_parts.append(data)
+        if not self._skip_depth and not self._in_title:
+            cleaned = " ".join(data.split())
+            if cleaned:
+                self._visible_parts.append(cleaned)
 
     @property
     def title(self) -> str | None:
         title = "".join(self._title_parts).strip()
         return title or None
+
+    @property
+    def visible_text_preview(self) -> str:
+        return " ".join(self._visible_parts)[:2000]
 
 
 def html_metadata(text: str) -> dict[str, Any]:
@@ -189,6 +222,7 @@ def html_metadata(text: str) -> dict[str, Any]:
         "parse_status": "lightweight",
         "title": parser.title,
         "tag_counts": dict(sorted(parser.tag_counts.items())[:50]),
+        "visible_text_preview": parser.visible_text_preview,
     }
 
 
@@ -202,4 +236,31 @@ def rtf_metadata(text: str) -> dict[str, Any]:
         "known_destination_controls": sorted(set(destinations)),
         "group_open_count": text.count("{"),
         "group_close_count": text.count("}"),
+        "plain_text_preview": rtf_plain_text_preview(text),
     }
+
+
+def toml_metadata(text: str) -> dict[str, Any]:
+    try:
+        import tomllib  # type: ignore[attr-defined]
+    except ModuleNotFoundError:
+        try:
+            import tomli as tomllib  # type: ignore[no-redef]
+        except ModuleNotFoundError as exc:
+            return {"parse_status": "toml_parser_unavailable", "error": str(exc)}
+    try:
+        data = tomllib.loads(text)
+    except Exception as exc:
+        return {"parse_status": "toml_parse_failed", "error": str(exc)}
+    return {
+        "parse_status": "ok",
+        "top_level_keys": list(data.keys())[:50] if isinstance(data, dict) else [],
+    }
+
+
+def rtf_plain_text_preview(text: str) -> str:
+    cleaned = re.sub(r"{\\\*?\\[^{}]+}", " ", text)
+    cleaned = re.sub(r"\\'[0-9a-fA-F]{2}", " ", cleaned)
+    cleaned = re.sub(r"\\[A-Za-z]+-?\d* ?", " ", cleaned)
+    cleaned = cleaned.replace("{", " ").replace("}", " ").replace("\\", "")
+    return " ".join(cleaned.split())[:2000]

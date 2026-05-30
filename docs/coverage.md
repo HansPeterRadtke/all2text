@@ -13,6 +13,11 @@ extracts.
 | Notebook | `.ipynb` | Preserves JSON text and records notebook cell count when parseable. |
 | Geospatial text | GeoJSON, KML | Preserves source text and classifies geospatial signatures. |
 | Text CAD | DXF/STEP/STL/OBJ/IGES when printable | Preserves text instead of pretending geometry analysis. |
+| DOCX | `.docx` with `python-docx` | Extracts core properties, paragraph/table order, raw XML paragraph counts, sections, headers/footers, hyperlinks, and embedded-image counts. |
+| XLSX | `.xlsx` with `openpyxl` | Extracts workbook metadata, all sheets including hidden sheets, every non-empty cell, formulas, cached values when present, filters, tables, defined names, cross-sheet references, chart metadata, and embedded-image anchors. |
+| PPTX | `.pptx` with `python-pptx` | Extracts slide geometry, shape metadata, text paragraphs, notes, and embedded-image counts. |
+| PDF | `.pdf` with `pypdf` | Extracts PDF metadata, page count, native page text, and image counts. Scanned-page OCR remains provider-configured. |
+| OpenDocument | ODT, ODS, ODP | Reads ZIP `content.xml` and extracts text nodes where feasible; layout/styles/formulas are not deeply interpreted. |
 | Archives/compressed streams | ZIP, TAR, TAR.GZ/TAR.BZ2/TAR.XZ, GZIP, BZIP2, XZ | Lists members or stream metadata safely; no extraction. |
 | EPUB | `.epub` | Lists package members and container XML preview; no chapter extraction claim. |
 | Email | `.eml`, `.mbox` text messages | Parses headers/plain text body, lists attachment metadata, and preserves original message source. |
@@ -22,12 +27,10 @@ extracts.
 
 | Category | Examples | Core behavior |
 | --- | --- | --- |
-| Image | PNG, JPEG, GIF, TIFF, BMP, WebP, HEIC, SVG | Records byte signature and light dimensions where possible. SVG text is preserved as markup. No OCR/VLM claim. |
-| Audio | WAV, MP3, FLAC, OGG, AAC, MIDI | Records media metadata and optional `ffprobe` output. No transcription. |
-| Video | MP4, MOV, MKV, AVI, WebM | Records media metadata and optional `ffprobe` output. No frame/text/scene extraction. |
-| Documents | PDF, DOC, DOCX, ODT | Safe summary and light PDF markers. Optional deep parsers are future backends. |
-| Spreadsheets | XLS, XLSX, ODS | Safe summary. No formula/table extraction in core. |
-| Presentations | PPT, PPTX, ODP | Safe summary. No slide extraction in core. |
+| Image | PNG, JPEG, GIF, TIFF, BMP, WebP, HEIC, SVG | Records dimensions/profile, route plan, provider status, OCR/VLM/chart/document hooks, and SVG markup when textual. No specialist success is claimed unless a configured provider returns content. |
+| Audio | WAV, MP3, FLAC, OGG, AAC, MIDI | Records media profile, optional `ffprobe`, speech/language/transcription/translation provider stages, and truthful blockers. |
+| Video | MP4, MOV, MKV, AVI, WebM | Records media profile, optional `ffprobe`, subtitles count, frame sampling/OCR/VLM stages, audio transcription hooks, and truthful blockers. |
+| Documents without native parser | DOC, malformed office/PDF files, XLS without `xlrd` | Safe summary with dependency/parser warning. |
 | Scientific data | HDF5, NetCDF, Parquet, FITS, MAT, NPY/NPZ | Safe byte/string summary. No dataset traversal in core. |
 | Binary geospatial | Shapefile, GeoPackage, raster/sidecar geospatial formats | Safe byte/string summary. No GDAL/Fiona/Rasterio inspection in core. |
 | Binary CAD | DWG and other non-text CAD | Safe summary. No geometry/layer extraction. |
@@ -47,8 +50,9 @@ structured format, while a strong binary magic signature still wins over a misle
 
 ## Placeholder Truthfulness
 
-Placeholder outputs are intentionally explicit. Images state that OCR, VLM, chart, and document
-analysis were not run unless a configured backend actually does that work. Audio/video outputs state
-that transcription and frame/scene analysis were not performed by core. Advanced document,
-spreadsheet, presentation, ebook, database, geospatial, CAD, scientific, font, executable, and disk
-image formats all produce useful metadata without claiming semantic extraction.
+Placeholder and provider-route outputs are intentionally explicit. Images state whether OCR, VLM,
+chart, and document-image providers were disabled, unavailable, skipped, attempted, or used.
+Audio/video outputs expose metadata, coarse unknown/safe classification, and speech/frame stages
+without inventing transcripts or scene labels. Advanced ebook, database, geospatial, CAD,
+scientific, font, executable, and disk-image formats all produce useful metadata without claiming
+semantic extraction beyond what the backend actually performed.

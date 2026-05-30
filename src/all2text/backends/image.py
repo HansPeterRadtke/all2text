@@ -5,14 +5,20 @@ import struct
 from pathlib import Path
 from typing import Any
 
-from all2text.backends.binary import binary_summary_text
 from all2text.backends.text import decode_text_bytes
+from all2text.config import config_for_context
 from all2text.models import Classification, ConversionContext, ConversionResult
+from all2text.providers import (
+    call_openai_compatible_vision,
+    image_to_png_bytes,
+    plan_image_route,
+    provider_statuses,
+)
 from all2text.utils import read_header
 
 
-class ImagePlaceholderBackend:
-    name = "image_placeholder_backend"
+class ImageAnalysisBackend:
+    name = "image_analysis_backend"
 
     def can_handle(self, classification: Classification, entry_type: str) -> bool:
         return entry_type == "file" and classification.rough_category == "image"
@@ -25,47 +31,103 @@ class ImagePlaceholderBackend:
         metadata: dict[str, object],
         ctx: ConversionContext,
     ) -> ConversionResult:
-        limitation = (
-            "Core all2text records image metadata only. OCR, VLM captioning, layout analysis, "
-            "and chart understanding require optional backends."
-        )
+        cfg = config_for_context(ctx.config)
         image_metadata = image_metadata_light(path, classification, ctx)
-        extra = [f"- limitation: {limitation}"]
-        extra.extend(
-            [
-                "- ocr_status: not_yet_run_no_ocr_backend_configured",
-                "- vlm_status: not_yet_run_no_vision_language_backend_configured",
-                "- chart_analysis_status: not_yet_run_no_chart_backend_configured",
-                "- document_image_analysis_status: not_yet_run_no_document_intelligence_backend_configured",
-            ]
+        profile, profile_warnings, pil_image = image_profile(path, classification, image_metadata)
+        statuses = provider_statuses(cfg, family="image")
+
+        warnings = list(profile_warnings)
+        methods = ["image_magic_metadata", "deterministic_image_profile", "provider_status_routing"]
+        ocr_result = run_ocr_if_configured(pil_image, cfg.provider("ocr"))
+        warnings.extend(ocr_result["warnings"])
+        ocr_used = bool(ocr_result["used"])
+        if ocr_result["attempted"]:
+            methods.append("configured_ocr_provider")
+
+        chart_candidate = bool(profile.get("chart_candidate"))
+        route = plan_image_route(
+            profile,
+            statuses,
+            ocr_attempted=bool(ocr_result["attempted"]),
+            chart_candidate=chart_candidate,
         )
-        if image_metadata:
-            extra.append("- image_metadata: " + repr(image_metadata))
-        text = binary_summary_text(path, classification, ctx, heading="Image safe summary", extra_lines=extra)
-        methods = ["image_magic_metadata", "image_placeholder_summary"]
+        vlm_text, vlm_warnings, vlm_meta = maybe_call_vlm(path, pil_image, cfg.provider("vlm"), rel_path, profile)
+        warnings.extend(vlm_warnings)
+        vlm_used = bool(vlm_text)
+        if vlm_meta:
+            methods.append("configured_vlm_provider_status")
+        if vlm_used:
+            methods.append("openai_compatible_vlm_caption")
+
+        chart_analysis = {
+            "candidate": chart_candidate,
+            "attempted": False,
+            "used": False,
+            "status": next((status.to_dict() for status in statuses if status.name == "chart"), None),
+            "evidence": {
+                "profile": profile.get("profile"),
+                "dimensions": profile.get("dimensions"),
+                "dominant_color_names": profile.get("dominant_color_names"),
+            },
+            "limitations": [
+                "No chart specialist provider produced table/series values.",
+                "Geometry/profile evidence is reported without invented chart labels or values.",
+            ],
+        }
+        document_hooks = {
+            "document_intelligence": next((status.to_dict() for status in statuses if status.name == "document_intelligence"), None),
+            "screenshot_or_document_candidate": route.family in {"document", "screenshot"},
+        }
+
+        rendered = render_image_analysis(
+            classification=classification,
+            image_metadata=image_metadata,
+            profile=profile,
+            provider_statuses=[status.to_dict() for status in statuses],
+            route=route.to_dict(),
+            ocr_result=ocr_result,
+            vlm_text=vlm_text,
+            vlm_meta=vlm_meta,
+            chart_analysis=chart_analysis,
+            document_hooks=document_hooks,
+        )
+        limitations = [
+            "Image extraction is evidence/report oriented unless configured OCR, VLM, chart, or document providers return content."
+        ]
+        if chart_candidate:
+            limitations.append("Chart candidate detected from image/profile evidence, but no specialist chart values are fabricated.")
         if classification.concrete_format.upper() == "SVG" and bool(metadata.get("looks_text")):
             raw = path.read_bytes()
-            svg_text, decode_meta, warnings = decode_text_bytes(raw)
-            text += "\nSVG textual markup preserved below:\n" + svg_text
-            return ConversionResult(
-                text=text if text.endswith("\n") else text + "\n",
-                converter_used=self.name,
-                extraction_methods_used=methods + ["svg_text_preservation"],
-                warnings=warnings,
-                metadata={
-                    "image": image_metadata,
-                    "svg_decode": decode_meta,
-                    "analysis_hooks": placeholder_analysis_hooks(),
-                },
-                limitations=[limitation],
-            )
+            svg_text, decode_meta, decode_warnings = decode_text_bytes(raw)
+            warnings.extend(decode_warnings)
+            rendered += "\nSVG textual markup preserved below:\n" + svg_text
+            methods.append("svg_text_preservation")
+            extra_metadata = {"svg_decode": decode_meta}
+        else:
+            extra_metadata = {}
         return ConversionResult(
-            text=text,
+            text=rendered if rendered.endswith("\n") else rendered + "\n",
             converter_used=self.name,
             extraction_methods_used=methods,
-            metadata={"image": image_metadata, "analysis_hooks": placeholder_analysis_hooks()},
-            limitations=[limitation],
+            warnings=warnings,
+            metadata={
+                "image": image_metadata,
+                "profile": profile,
+                "provider_statuses": [status.to_dict() for status in statuses],
+                "route": route.to_dict(),
+                "ocr": ocr_result,
+                "vlm": {"text": vlm_text, **vlm_meta},
+                "chart_analysis": chart_analysis,
+                "document_hooks": document_hooks,
+                **extra_metadata,
+            },
+            limitations=limitations,
+            ocr_used=ocr_used,
+            vlm_used=vlm_used,
         )
+
+
+ImagePlaceholderBackend = ImageAnalysisBackend
 
 
 def image_metadata_light(path: Path, classification: Classification, ctx: ConversionContext) -> dict[str, Any]:
@@ -92,13 +154,249 @@ def image_metadata_light(path: Path, classification: Classification, ctx: Conver
     return {}
 
 
-def placeholder_analysis_hooks() -> dict[str, Any]:
-    return {
-        "ocr": {"configured": False, "attempted": False},
-        "vlm": {"configured": False, "attempted": False},
-        "chart_analysis": {"configured": False, "attempted": False},
-        "document_intelligence": {"configured": False, "attempted": False},
+def image_profile(
+    path: Path,
+    classification: Classification,
+    image_metadata: dict[str, Any],
+) -> tuple[dict[str, Any], list[str], Any | None]:
+    warnings: list[str] = []
+    fmt = classification.concrete_format.upper()
+    pil_image = None
+    width = image_metadata.get("width")
+    height = image_metadata.get("height")
+    mode = None
+    dominant: list[str] = []
+    non_white_ratio = None
+    color_count_estimate = None
+    try:
+        from PIL import Image
+
+        with Image.open(path) as opened:
+            pil_image = opened.convert("RGB")
+            width, height = pil_image.size
+            mode = opened.mode
+            dominant, non_white_ratio, color_count_estimate = sampled_color_profile(pil_image)
+    except Exception as exc:
+        if fmt not in {"SVG"}:
+            warnings.append(f"pil_image_profile_unavailable:{exc}")
+
+    aspect = round(float(width) / float(height), 3) if width and height else None
+    profile = classify_profile(
+        fmt=fmt,
+        width=int(width) if width else None,
+        height=int(height) if height else None,
+        aspect=aspect,
+        non_white_ratio=non_white_ratio,
+        color_count_estimate=color_count_estimate,
+        path=path,
+    )
+    chart_candidate = profile in {"chart_or_plot_candidate", "technical_chart_or_diagram_candidate"}
+    return (
+        {
+            "profile": profile,
+            "format": fmt,
+            "dimensions": {"width": width, "height": height},
+            "aspect_ratio": aspect,
+            "mode": mode,
+            "dominant_color_names": dominant,
+            "non_white_ratio": round(non_white_ratio, 4) if isinstance(non_white_ratio, float) else None,
+            "color_count_estimate": color_count_estimate,
+            "chart_candidate": chart_candidate,
+            "profile_source": "deterministic_header_pil_sampling" if pil_image is not None else "deterministic_header_only",
+        },
+        warnings,
+        pil_image,
+    )
+
+
+def sampled_color_profile(image: Any) -> tuple[list[str], float, int]:
+    rgb = image.convert("RGB")
+    width, height = rgb.size
+    step = max(1, int((width * height / 5000) ** 0.5))
+    counts: dict[str, int] = {}
+    non_white = 0
+    total = 0
+    unique_sample: set[tuple[int, int, int]] = set()
+    for y in range(0, height, step):
+        for x in range(0, width, step):
+            pixel = tuple(int(v) for v in rgb.getpixel((x, y))[:3])
+            total += 1
+            unique_sample.add(pixel)
+            if any(channel < 245 for channel in pixel):
+                non_white += 1
+                name = color_name(pixel)
+                counts[name] = counts.get(name, 0) + 1
+    dominant = [name for name, _count in sorted(counts.items(), key=lambda item: item[1], reverse=True)[:5]]
+    return dominant, (non_white / total if total else 0.0), len(unique_sample)
+
+
+def classify_profile(
+    *,
+    fmt: str,
+    width: int | None,
+    height: int | None,
+    aspect: float | None,
+    non_white_ratio: float | None,
+    color_count_estimate: int | None,
+    path: Path,
+) -> str:
+    if fmt == "SVG":
+        return "vector_document_or_diagram"
+    name = path.stem.casefold()
+    if any(token in name for token in ("chart", "plot", "graph")):
+        return "chart_or_plot_candidate"
+    if any(token in name for token in ("screenshot", "screen", "slide")):
+        return "screenshot_candidate"
+    if any(token in name for token in ("diagram", "schematic", "circuit", "floorplan", "drawing")):
+        return "technical_chart_or_diagram_candidate"
+    if width and height and width >= 1200 and height >= 700 and color_count_estimate and color_count_estimate < 512:
+        return "screenshot_candidate"
+    if aspect and (aspect >= 2.2 or aspect <= 0.45) and color_count_estimate and color_count_estimate < 128:
+        return "technical_chart_or_diagram_candidate"
+    if non_white_ratio is not None and non_white_ratio < 0.015:
+        return "mostly_blank_or_sparse"
+    return "general_image_metadata_profile"
+
+
+def run_ocr_if_configured(image: Any | None, provider: Any) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "attempted": False,
+        "used": False,
+        "text": "",
+        "warnings": [],
+        "provider": getattr(provider, "name", "none"),
+        "confidence": None,
+        "discard_reason": "ocr_disabled_or_not_auto_invoked",
     }
+    if not getattr(provider, "enabled", False) or provider.name != "tesseract" or not bool(provider.get("auto_invoke", False)):
+        return result
+    result["attempted"] = True
+    if image is None:
+        result["warnings"].append("ocr_skipped_no_decodable_image")
+        result["discard_reason"] = "no_decodable_image"
+        return result
+    try:
+        import pytesseract
+
+        text = pytesseract.image_to_string(image, lang=str(provider.get("language", "eng")), timeout=int(provider.get("timeout_seconds", 30)))
+    except Exception as exc:
+        result["warnings"].append(f"ocr_failed:{exc}")
+        result["discard_reason"] = "provider_failed"
+        return result
+    cleaned = text.strip()
+    result["text"] = cleaned
+    result["used"] = bool(cleaned)
+    result["discard_reason"] = None if cleaned else "empty_ocr_result"
+    return result
+
+
+def maybe_call_vlm(
+    path: Path,
+    image: Any | None,
+    provider: Any,
+    rel_path: Path,
+    profile: dict[str, Any],
+) -> tuple[str | None, list[str], dict[str, Any]]:
+    image_bytes = image_to_png_bytes(image) if image is not None else None
+    mime_type = "image/png"
+    if image_bytes is None:
+        try:
+            image_bytes = path.read_bytes()
+            mime_type = "image/svg+xml" if path.suffix.casefold() == ".svg" else "application/octet-stream"
+        except Exception as exc:
+            return None, [f"vlm_image_read_failed:{exc}"], {}
+    prompt = (
+        "Describe the image using only visible evidence. Report uncertainty. "
+        "If it is a chart, do not invent labels or values that are not visible. "
+        f"File label: {rel_path.as_posix()}. Deterministic profile: {profile.get('profile')}."
+    )
+    return call_openai_compatible_vision(image_bytes, provider, prompt=prompt, mime_type=mime_type)
+
+
+def render_image_analysis(
+    *,
+    classification: Classification,
+    image_metadata: dict[str, Any],
+    profile: dict[str, Any],
+    provider_statuses: list[dict[str, Any]],
+    route: dict[str, Any],
+    ocr_result: dict[str, Any],
+    vlm_text: str | None,
+    vlm_meta: dict[str, Any],
+    chart_analysis: dict[str, Any],
+    document_hooks: dict[str, Any],
+) -> str:
+    lines = [
+        f"Format: {classification.concrete_format}",
+        "Conversion: image metadata, deterministic profile, and configured provider routing.",
+        "Limitation: OCR, VLM, chart, and document-image conclusions are only used when configured providers return evidence.",
+        "",
+        "Image metadata:",
+        f"- {image_metadata or {}}",
+        "",
+        "Image profile:",
+        f"- profile: {profile.get('profile')}",
+        f"- dimensions: {profile.get('dimensions')}",
+        f"- aspect_ratio: {profile.get('aspect_ratio')}",
+        f"- dominant_color_names: {profile.get('dominant_color_names')}",
+        f"- chart_candidate: {profile.get('chart_candidate')}",
+        "",
+        "Provider route:",
+        f"- family: {route.get('family')}",
+        f"- primary_route: {route.get('primary_route')}",
+        f"- provider_sequence: {route.get('provider_sequence')}",
+        f"- fallback_reasons: {route.get('fallback_reasons')}",
+        "",
+        "Provider statuses:",
+    ]
+    lines.extend(f"- {status}" for status in provider_statuses)
+    lines.extend(
+        [
+            "",
+            "OCR:",
+            f"- attempted: {ocr_result.get('attempted')}",
+            f"- used: {ocr_result.get('used')}",
+            f"- discard_reason: {ocr_result.get('discard_reason')}",
+            f"- text: {ocr_result.get('text') or '<none>'}",
+            "",
+            "VLM:",
+            f"- attempted: {bool(vlm_meta)}",
+            f"- used: {bool(vlm_text)}",
+            f"- text: {vlm_text or '<none>'}",
+            "",
+            "Chart analysis hooks:",
+            f"- {chart_analysis}",
+            "",
+            "Document/screenshot hooks:",
+            f"- {document_hooks}",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def color_name(pixel: tuple[int, int, int]) -> str:
+    red, green, blue = pixel
+    if red > 235 and green > 235 and blue > 235:
+        return "white"
+    if red < 40 and green < 40 and blue < 40:
+        return "black"
+    if abs(red - green) < 18 and abs(green - blue) < 18:
+        return "gray"
+    if red > 180 and green > 120 and blue < 90:
+        return "orange"
+    if red > 170 and green < 100 and blue < 100:
+        return "red"
+    if green > 140 and red < 140 and blue < 140:
+        return "green"
+    if blue > 150 and red < 140:
+        return "blue"
+    if red > 150 and blue > 130 and green < 130:
+        return "purple"
+    if red > 150 and green > 150 and blue < 90:
+        return "yellow"
+    if red > 120 and green > 70 and blue < 70:
+        return "brown"
+    return "mixed"
 
 
 def jpeg_dimensions(path: Path) -> dict[str, int] | None:

@@ -15,9 +15,11 @@ Core behavior:
   limitation metadata;
 - preserve decoded text and structured text exactly in the extracted-content section, including
   Markdown, JSON, JSONL, YAML, XML, HTML, RTF, notebooks, GeoJSON/KML, and source code;
+- extract DOCX, XLSX, PPTX, PDF, and OpenDocument text/structure when the optional document
+  dependencies for those formats are installed, with truthful fallback otherwise;
 - list ZIP/TAR/GZIP/BZIP2/XZ-style archives or compressed streams safely without extracting them;
 - record symlinks without following them;
-- provide explicit safe summaries for binary and unsupported deep formats;
+- provide explicit safe summaries and provider-route reports for binary and unsupported deep formats;
 - generate `_conversion_manifest.json` and `_conversion_report.txt`.
 
 Example:
@@ -34,8 +36,9 @@ cd /data/src/github/all2text
 python -m pip install -e .
 ```
 
-Core `all2text` intentionally has no required third-party runtime dependencies. Optional groups are
-declared for future deep extraction backends:
+Core `all2text` intentionally keeps heavy dependencies optional. The config loader uses Python
+3.11+ `tomllib`, optional `tomli`, or a small fallback parser for the simple template shipped here.
+Optional groups enable native extraction paths when installed:
 
 ```bash
 python -m pip install -e '.[documents,ocr,scientific,cad]'
@@ -45,6 +48,7 @@ python -m pip install -e '.[documents,ocr,scientific,cad]'
 
 ```bash
 all2text /path/to/source /path/to/output
+all2text --config /path/to/all2text.toml /path/to/source /path/to/output
 ```
 
 Useful options:
@@ -75,15 +79,23 @@ The primary API is intentionally small. Advanced users can pass `RunOptions` or 
 `ConversionRegistry` to plug in backends without changing the workflow.
 
 ```python
-from all2text import run
+from all2text import load_config, run
 from all2text.models import RunOptions
 
+config = load_config("all2text.default.toml")
 manifest = run(
     "source",
     "out",
     options=RunOptions(use_file_command=False, copy_source_stat=False),
+    config=config,
 )
 ```
+
+Configuration is TOML-oriented and keeps module/provider selection outside code. Start from
+[`all2text.default.toml`](all2text.default.toml) to choose backends per file family and configure
+providers such as OCR, local llama.cpp VLM, speech transcription, frame sampling, or chart
+specialists. Provider parameters are carried into manifests even when the provider is disabled or
+unavailable.
 
 ## Current Format Coverage
 
@@ -92,6 +104,18 @@ Native core extraction:
 - text, Markdown, source code, JSON, JSONL, CSV, TSV, YAML, XML, HTML, RTF, notebooks,
   GeoJSON/KML, and text-based CAD formats are decoded and preserved in the extracted-content
   section;
+- DOCX uses `python-docx` when installed to emit properties, paragraph/table order, raw
+  WordprocessingML paragraph counts, sections, headers, footers, hyperlinks, and embedded-image
+  counts;
+- XLSX uses `openpyxl` when installed to emit all sheets, hidden sheets, dimensions, every non-empty
+  cell, formulas, cached values when available, tables, filters, defined names, cross-sheet
+  references, chart metadata, and embedded-image anchors;
+- PPTX uses `python-pptx` when installed to emit slide geometry, shapes, paragraphs, notes, and
+  embedded-image counts;
+- PDF uses `pypdf` when installed to emit metadata, page count, native text per page, and image
+  counts; scanned-page OCR remains provider-configured work;
+- ODT/ODS/ODP are read as OpenDocument ZIP packages and content.xml text nodes are extracted where
+  feasible;
 - ZIP/TAR/GZIP/BZIP2/XZ archives or streams are listed/summarized safely with path traversal
   warnings where member paths exist;
 - EPUB packages are listed and probed as containers;
@@ -101,13 +125,13 @@ Native core extraction:
 
 Safe placeholder coverage:
 
-- image, audio, video, PDF, DOC/DOCX, XLS/XLSX, PPT/PPTX, ODT/ODS/ODP, scientific data,
+- image, audio, video, DOC, XLS without `xlrd`, scientific data,
   binary geospatial, binary CAD, fonts, executables, disk images, unknown binaries, and specialist
   containers.
 
-Placeholders detect, classify, emit metadata, summarize bytes/strings safely, and state exactly
-what was not extracted. They do not claim OCR, transcription, VLM understanding, CAD geometry
-analysis, spreadsheet formula evaluation, or scientific array extraction.
+Image and media outputs now include layered provider routing/status reports. They do not claim OCR,
+transcription, VLM understanding, chart values, CAD geometry analysis, or scientific array
+extraction unless a configured provider actually returns accepted evidence.
 
 See [docs/coverage.md](docs/coverage.md) for the detailed matrix.
 
@@ -123,6 +147,8 @@ This repository was bootstrapped from lessons learned in
 - archive listing instead of unsafe extraction;
 - symlink recording without traversal;
 - truthful limitations for unsupported binary formats.
+- native DOCX/XLSX/PPTX/PDF extraction patterns and routed image-provider lessons, generalized into
+  configurable all2text infrastructure.
 
 `all2text` turns those lessons into an independent, modular package with a stable backend contract.
 
@@ -154,6 +180,7 @@ pytest
 Detailed docs:
 
 - [Architecture](docs/architecture.md)
+- [Configuration](docs/configuration.md)
 - [Format coverage](docs/coverage.md)
 - [Metadata strategy](docs/metadata.md)
 - [CLI and API](docs/cli-api.md)

@@ -1,0 +1,86 @@
+# Default all2text configuration template.
+#
+# Copy this file outside generated output directories and pass it with:
+#   all2text --config /path/to/all2text.toml /path/to/source /path/to/output
+
+[run]
+max_header_bytes = 4096
+max_hash_bytes = 268435456
+max_binary_sample_bytes = 1048576
+max_archive_members = 5000
+use_file_command = true
+copy_source_stat = true
+reject_target_inside_source = true
+
+[modules]
+text = "text_exact_backend"
+structured_text = "text_exact_backend"
+source_code = "text_exact_backend"
+notebook = "text_exact_backend"
+email = "email_metadata_backend"
+archive = "archive_listing_backend"
+compressed = "archive_listing_backend"
+database = "database_metadata_backend"
+document = "document_native_backend"
+spreadsheet = "document_native_backend"
+presentation = "document_native_backend"
+image = "image_analysis_backend"
+audio = "media_analysis_backend"
+video = "media_analysis_backend"
+scientific_data = "scientific_placeholder_backend"
+geospatial = "text_exact_backend"
+cad_or_technical = "text_exact_backend"
+font = "font_placeholder_backend"
+executable_or_binary = "executable_placeholder_backend"
+disk_image_or_container = "container_placeholder_backend"
+unknown = "binary_fallback"
+
+[providers.ocr]
+name = "none"
+enabled = false
+language = "eng"
+timeout_seconds = 30
+auto_invoke = false
+
+[providers.vlm]
+name = "openai_compatible"
+enabled = false
+base_url = "http://127.0.0.1:14830/v1"
+model = "Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf"
+timeout_seconds = 120
+max_tokens = 300
+auto_invoke = false
+
+[providers.llm_text]
+name = "openai_compatible"
+enabled = false
+base_url = "http://127.0.0.1:14829/v1"
+model = "Qwen2.5-14B-Instruct-Q4_K_M.gguf"
+timeout_seconds = 120
+max_tokens = 512
+auto_invoke = false
+
+[providers.chart]
+name = "none"
+enabled = false
+specialist = "none"
+model_path = ""
+embedded_images_enabled = false
+
+[providers.document_intelligence]
+name = "none"
+enabled = false
+
+[providers.speech]
+name = "none"
+enabled = false
+transcribe = false
+translate = false
+language_detection = false
+
+[providers.video_frames]
+name = "none"
+enabled = false
+sample_frames = false
+ocr = false
+vlm = false

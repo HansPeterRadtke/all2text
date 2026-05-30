@@ -80,9 +80,9 @@ Run a text-only OpenAI-compatible llama server on a local port:
 ```bash
 /data/opt/llama.cpp/build/bin/llama-server \
   --host 127.0.0.1 \
-  --port 8081 \
+  --port 14829 \
   -m /data/models/llama_cpp/Qwen2.5-14B-Instruct-Q4_K_M.gguf \
-  -c 8192 \
+  -c 32768 \
   -ngl 99
 ```
 
@@ -91,7 +91,7 @@ On memory-constrained Jetson systems, reduce context size or GPU layers:
 ```bash
 /data/opt/llama.cpp/build/bin/llama-server \
   --host 127.0.0.1 \
-  --port 8081 \
+  --port 14829 \
   -m /data/models/llama_cpp/Qwen2.5-14B-Instruct-Q4_K_M.gguf \
   -c 4096 \
   -ngl 40
@@ -100,13 +100,13 @@ On memory-constrained Jetson systems, reduce context size or GPU layers:
 Health check:
 
 ```bash
-curl http://127.0.0.1:8081/health
+curl http://127.0.0.1:14829/health
 ```
 
 Minimal chat check:
 
 ```bash
-curl http://127.0.0.1:8081/v1/chat/completions \
+curl http://127.0.0.1:14829/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "local-text",
@@ -123,7 +123,7 @@ Run a separate local server for vision so text and VLM capacity can be managed i
 ```bash
 /data/opt/llama.cpp/build/bin/llama-server \
   --host 127.0.0.1 \
-  --port 8082 \
+  --port 14830 \
   -m /data/models/llama_cpp/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf \
   --mmproj /data/models/llama_cpp/mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf \
   -c 8192 \
@@ -145,17 +145,29 @@ Future llama.cpp-backed all2text providers should be optional backends. They sho
 - store concise provider metadata in `ConversionResult.metadata`;
 - leave core placeholder behavior unchanged when the server is unavailable.
 
-Suggested external configuration names:
+Config example:
 
-```bash
-export ALL2TEXT_LLAMA_TEXT_BASE_URL=http://127.0.0.1:8081
-export ALL2TEXT_LLAMA_TEXT_MODEL=Qwen2.5-14B-Instruct-Q4_K_M.gguf
-export ALL2TEXT_LLAMA_VISION_BASE_URL=http://127.0.0.1:8082
-export ALL2TEXT_LLAMA_VISION_MODEL=Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf
-export ALL2TEXT_LLAMA_VISION_MMPROJ=mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf
+```toml
+[providers.llm_text]
+name = "openai_compatible"
+enabled = true
+base_url = "http://127.0.0.1:14829/v1"
+model = "Qwen2.5-14B-Instruct-Q4_K_M.gguf"
+max_tokens = 512
+auto_invoke = false
+
+[providers.vlm]
+name = "openai_compatible"
+enabled = true
+base_url = "http://127.0.0.1:14830/v1"
+model = "Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf"
+max_tokens = 300
+auto_invoke = false
+mmproj = "mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf"
 ```
 
-These variables document the intended contract; the current core package does not require them.
+`auto_invoke = false` records provider availability and route metadata without making local model
+calls. Set it to `true` only for conversion runs where the corresponding server is already running.
 
 ## References
 

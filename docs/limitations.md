@@ -4,11 +4,18 @@ The core package favors truthful, auditable output over broad but shallow claims
 
 Current limitations:
 
-- PDF, DOCX, XLSX, PPTX, ODT, ODS, and ODP are not semantically extracted by core backends.
+- DOCX, XLSX, PPTX, PDF, ODT, ODS, and ODP extraction depends on optional libraries and parser
+  success. When the dependency is absent or parsing fails, all2text emits a safe summary with the
+  exact limitation.
+- PDF extraction is native-text first. Scanned-page rendering/OCR is not automatic unless configured
+  providers are added.
 - RTF is preserved as structured source text with lightweight metadata, but rich text layout is not
   rendered or semantically normalized.
-- Images do not receive OCR, captions, chart tables, or visual scene understanding in core.
-- Audio and video are not transcribed; `ffprobe` metadata is used only when available.
+- Images include metadata/profile/provider-route reports. OCR, captions, chart tables, document
+  understanding, and visual scene analysis require explicit provider configuration and are only
+  marked used when providers return content.
+- Audio and video are not transcribed by default; `ffprobe` metadata is used only when available,
+  and speech/frame stages remain provider hooks unless configured adapters are added.
 - Binary geospatial files are not inspected for coordinate reference systems, layers, features, or
   raster bands in core.
 - Scientific data files are not traversed for datasets or arrays in core.
@@ -18,8 +25,9 @@ Current limitations:
 - Archive members are listed but not recursively extracted.
 - Compressed streams are only summarized or lightly peeked; nested payload conversion is not enabled
   by default.
-- Formula cached values, rendered spreadsheet charts, and embedded document images require optional
-  document-specific backends.
+- Formula cached values in XLSX are reported when available in the file. all2text does not evaluate
+  formulas. Rendered spreadsheet charts and embedded document-image OCR/VLM analysis require
+  optional providers.
 - Local LLM/VLM/OCR models are not bundled with the repository. Model files must stay external and
   be supplied by the operator.
 
