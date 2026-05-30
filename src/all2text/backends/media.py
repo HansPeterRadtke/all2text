@@ -29,6 +29,12 @@ class MediaPlaceholderBackend:
         )
         ffprobe_metadata, warnings = ffprobe(path)
         extra = [f"- limitation: {limitation}"]
+        extra.extend(
+            [
+                "- transcription_status: not_yet_transcribed_no_audio_speech_backend_configured",
+                "- video_analysis_status: not_yet_analyzed_no_frame_or_scene_backend_configured",
+            ]
+        )
         if ffprobe_metadata:
             extra.append("- ffprobe_metadata_available: true")
         text = binary_summary_text(path, classification, ctx, heading="Media safe summary", extra_lines=extra)
@@ -79,4 +85,3 @@ def ffprobe(path: Path) -> tuple[dict[str, object] | None, list[str]]:
         return json.loads(completed.stdout or "{}"), []
     except Exception:
         return {"raw_stdout": completed.stdout[:4000]}, ["ffprobe_json_parse_failed"]
-

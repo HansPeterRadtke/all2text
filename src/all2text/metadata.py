@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import mimetypes
 import os
+import platform
 import shutil
 import stat as stat_module
 import subprocess
@@ -10,7 +11,16 @@ from pathlib import Path
 from typing import Any
 
 from all2text.models import RunOptions
-from all2text.utils import file_size, looks_like_text, read_header, safe_ascii, sha256_file, timestamp, utc_now
+from all2text.utils import (
+    file_size,
+    looks_like_text,
+    os_info,
+    read_header,
+    safe_ascii,
+    sha256_file,
+    timestamp,
+    utc_now,
+)
 
 
 def collect_metadata(
@@ -28,6 +38,7 @@ def collect_metadata(
         "entry_type": entry_type,
         "link_target": link_target,
         "collected_utc": utc_now(),
+        "os": os_info(),
     }
     errors: list[str] = []
     warnings: list[str] = []
@@ -56,6 +67,10 @@ def collect_metadata(
     xattrs, xattr_warnings = xattrs_metadata(path)
     metadata["xattrs"] = xattrs
     warnings.extend(xattr_warnings)
+
+    acl, acl_warnings = acl_summary(path)
+    metadata["acl_summary"] = acl
+    warnings.extend(acl_warnings)
 
     metadata["metadata_errors"] = errors
     metadata["metadata_warnings"] = warnings
@@ -205,6 +220,29 @@ def xattrs_metadata(path: Path) -> tuple[dict[str, Any], list[str]]:
     return {"available": True, "items": items}, warnings
 
 
+def acl_summary(path: Path) -> tuple[dict[str, Any], list[str]]:
+    getfacl = shutil.which("getfacl")
+    if platform.system() != "Linux" or not getfacl:
+        return {"available": False, "summary": None}, ["acl_summary_unavailable"]
+    try:
+        completed = subprocess.run(
+            [getfacl, "-cp", "--", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception as exc:
+        return {"available": True, "summary": None}, [f"acl_summary_failed:{exc}"]
+    if completed.returncode != 0:
+        return {
+            "available": True,
+            "summary": None,
+        }, [f"acl_summary_failed:{completed.stderr.strip() or completed.returncode}"]
+    text = completed.stdout.strip()
+    return {"available": True, "summary": text[:4000], "truncated": len(text) > 4000}, []
+
+
 def copy_supported_metadata(source: Path, target: Path, *, entry_type: str, options: RunOptions) -> list[str]:
     if not options.copy_source_stat:
         return ["filesystem_metadata_copy_disabled"]
@@ -265,4 +303,3 @@ def group_name(gid: Any) -> str | None:
         return grp.getgrgid(int(gid)).gr_name
     except Exception:
         return None
-

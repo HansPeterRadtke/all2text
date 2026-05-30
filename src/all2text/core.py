@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 from typing import Any
 
 from all2text.backends.binary import BinaryFallbackBackend
 from all2text.detection import classify_path
+from all2text.jsonsafe import json_dumps, to_jsonable
 from all2text.metadata import collect_metadata, copy_supported_metadata
 from all2text.models import Classification, ConversionContext, ConversionResult, RunOptions, TreeEntry
 from all2text.planning import create_target_directories, reserve_output_files
@@ -81,9 +81,10 @@ def run(
         "entries": records,
     }
     manifest_path, report_path = manifest_paths(target_root)
-    write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False, default=str) + "\n")
-    write_text(report_path, render_report(manifest))
-    return manifest
+    safe_manifest = to_jsonable(manifest)
+    write_text(manifest_path, json_dumps(safe_manifest, indent=2) + "\n")
+    write_text(report_path, render_report(safe_manifest))
+    return safe_manifest
 
 
 def directory_record(entry: TreeEntry, options: RunOptions) -> dict[str, Any]:
@@ -104,10 +105,14 @@ def directory_record(entry: TreeEntry, options: RunOptions) -> dict[str, Any]:
         "classification": None,
         "converter_used": "directory_mirror",
         "extraction_methods_used": ["directory_metadata"],
+        "converter_metadata": {},
         "metadata_copy_warnings": [],
         "errors": entry.scan_errors + list(metadata.get("metadata_errors", [])),
         "warnings": entry.scan_warnings + list(metadata.get("metadata_warnings", [])),
         "runtime_seconds": 0.0,
+        "llm_used": False,
+        "ocr_used": False,
+        "vlm_used": False,
         "limitations": [],
     }
 
@@ -156,10 +161,14 @@ def convert_entry(
         "classification": classification.to_dict(),
         "converter_used": result.converter_used,
         "extraction_methods_used": result.extraction_methods_used,
+        "converter_metadata": result.metadata,
         "metadata_copy_warnings": copy_warnings,
         "errors": errors,
         "warnings": warnings,
         "runtime_seconds": round(time.monotonic() - started, 3),
+        "llm_used": result.llm_used,
+        "ocr_used": result.ocr_used,
+        "vlm_used": result.vlm_used,
         "limitations": result.limitations,
     }
 
@@ -190,4 +199,3 @@ def convert_with_backend(
             errors=[f"converter_failed:{exc}"],
             limitations=["The entry could not be converted beyond recorded metadata."],
         )
-

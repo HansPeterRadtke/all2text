@@ -23,23 +23,26 @@ def classify_path(
     options = options or RunOptions()
     metadata = metadata or {}
     extension_hint = extension_hint_for(path)
+    name_hint = name_hint_for(path)
     mime_hint = mime_hint_for(path, metadata)
     content_signature = content_signature_for(path, entry_type=entry_type, options=options)
 
-    layers = [extension_hint, mime_hint, content_signature]
+    layers = [extension_hint, name_hint, mime_hint, content_signature]
     evidence: list[str] = []
     warnings: list[str] = []
     for layer in layers:
         evidence.extend(layer.evidence)
         warnings.extend(layer.warnings)
 
-    chosen = _choose_layer(extension_hint, mime_hint, content_signature, metadata)
+    chosen = _choose_layer(extension_hint, name_hint, mime_hint, content_signature, metadata)
     rough = chosen.rough_category or ("text" if metadata.get("looks_text") else "unknown")
     fmt = chosen.concrete_format or ("TXT" if rough == "text" else "unknown")
     if chosen is content_signature and chosen.rough_category:
         evidence.append("layer2_content_signature_override")
     elif chosen is mime_hint and chosen.rough_category:
         evidence.append("layer2_mime_override")
+    elif chosen is name_hint and chosen.rough_category:
+        evidence.append("layer1_name_hint")
     elif chosen is extension_hint and chosen.rough_category:
         evidence.append("layer1_extension_hint")
     else:
@@ -50,6 +53,7 @@ def classify_path(
     confidence = chosen.confidence if chosen.rough_category else ("low" if rough == "text" else "none")
     return Classification(
         extension_hint=extension_hint,
+        name_hint=name_hint,
         mime_hint=mime_hint,
         content_signature=content_signature,
         rough_category=rough,
@@ -102,6 +106,48 @@ def extension_hint_for(path: Path) -> LayerEvidence:
     )
 
 
+def name_hint_for(path: Path) -> LayerEvidence:
+    name = path.name.casefold()
+    stem = path.stem.casefold()
+    source_names = {
+        "dockerfile": ("source_code", "Dockerfile"),
+        "makefile": ("source_code", "Makefile"),
+        "rakefile": ("source_code", "Rakefile"),
+        "gemfile": ("source_code", "Ruby Gemfile"),
+        "cmakelists.txt": ("source_code", "CMake"),
+        "justfile": ("source_code", "Justfile"),
+    }
+    text_names = {
+        "license": ("text", "License text"),
+        "licence": ("text", "License text"),
+        "copying": ("text", "License text"),
+        "notice": ("text", "Notice text"),
+        "readme": ("structured_text", "README"),
+        "changelog": ("structured_text", "Changelog"),
+    }
+    if name in source_names:
+        category, fmt = source_names[name]
+        return LayerEvidence(
+            source="name",
+            rough_category=category,
+            concrete_format=fmt,
+            confidence="medium",
+            details={"name": path.name},
+            evidence=[f"name_hint:{path.name}->{fmt}"],
+        )
+    if name in text_names or stem in text_names:
+        category, fmt = text_names.get(name) or text_names[stem]
+        return LayerEvidence(
+            source="name",
+            rough_category=category,
+            concrete_format=fmt,
+            confidence="medium",
+            details={"name": path.name},
+            evidence=[f"name_hint:{path.name}->{fmt}"],
+        )
+    return LayerEvidence(source="name", confidence="none", details={"name": path.name})
+
+
 def mime_hint_for(path: Path, metadata: dict[str, Any]) -> LayerEvidence:
     candidates = [
         ("file", metadata.get("file_mime_type")),
@@ -114,6 +160,16 @@ def mime_hint_for(path: Path, metadata: dict[str, Any]) -> LayerEvidence:
         mime = str(value or "").strip()
         if not mime:
             continue
+        if mime in MIME_HINTS:
+            category, fmt = MIME_HINTS[mime]
+            return LayerEvidence(
+                source=source,
+                rough_category=category,
+                concrete_format=fmt,
+                confidence="low" if mime == "application/octet-stream" else "medium",
+                details={"mime_type": mime},
+                evidence=[f"{source}_mime:{mime}->{fmt}"],
+            )
         if mime.startswith("text/"):
             return LayerEvidence(
                 source=source,
@@ -133,16 +189,6 @@ def mime_hint_for(path: Path, metadata: dict[str, Any]) -> LayerEvidence:
                     details={"mime_type": mime},
                     evidence=[f"{source}_mime:{mime}"],
                 )
-        if mime in MIME_HINTS:
-            category, fmt = MIME_HINTS[mime]
-            return LayerEvidence(
-                source=source,
-                rough_category=category,
-                concrete_format=fmt,
-                confidence="low" if mime == "application/octet-stream" else "medium",
-                details={"mime_type": mime},
-                evidence=[f"{source}_mime:{mime}->{fmt}"],
-            )
     return LayerEvidence(source="mime", confidence="none", details={"mime_type": None})
 
 
@@ -178,18 +224,25 @@ def decode_for_classification(raw: bytes) -> str | None:
 
 def _choose_layer(
     extension_hint: LayerEvidence,
+    name_hint: LayerEvidence,
     mime_hint: LayerEvidence,
     content_signature: LayerEvidence,
     metadata: dict[str, Any],
 ) -> LayerEvidence:
     if content_signature.rough_category and content_signature.confidence == "strong":
         return content_signature
+    if mime_hint.rough_category and mime_hint.confidence in {"strong", "medium"} and _specific_evidence(mime_hint):
+        return mime_hint
+    if content_signature.rough_category and _specific_evidence(content_signature):
+        return content_signature
+    if extension_hint.rough_category:
+        return extension_hint
+    if name_hint.rough_category:
+        return name_hint
     if mime_hint.rough_category and mime_hint.confidence in {"strong", "medium"}:
         return mime_hint
     if content_signature.rough_category:
         return content_signature
-    if extension_hint.rough_category:
-        return extension_hint
     if metadata.get("looks_text"):
         return LayerEvidence(
             source="generic",
@@ -201,6 +254,15 @@ def _choose_layer(
     return LayerEvidence(source="generic", rough_category="unknown", concrete_format="unknown")
 
 
+def _specific_evidence(layer: LayerEvidence) -> bool:
+    if layer.rough_category != "text":
+        return True
+    fmt = (layer.concrete_format or "").upper()
+    if fmt and fmt != "TXT":
+        return True
+    return not any(item == "printable_text_signature" for item in layer.evidence)
+
+
 def _is_textual(
     rough_category: str,
     concrete_format: str,
@@ -209,6 +271,8 @@ def _is_textual(
 ) -> bool:
     if rough_category in TEXTUAL_CATEGORIES:
         return True
+    if rough_category == "geospatial":
+        return concrete_format.upper() in {"GEOJSON", "KML"} and bool(metadata.get("looks_text"))
     if rough_category == "cad_or_technical" and metadata.get("looks_text"):
         return concrete_format.upper() in {"DXF", "STEP", "STP", "STL", "OBJ", "IGES"}
     if rough_category == "email" and concrete_format.upper() in {"EML", "MBOX"} and metadata.get("looks_text"):
@@ -223,6 +287,8 @@ def _content_profile(rough_category: str, concrete_format: str, metadata: dict[s
         return "placeholder_or_optional_backend"
     if rough_category in {"archive", "compressed", "ebook", "disk_image_or_container"}:
         return "container_listing_or_placeholder"
+    if rough_category == "geospatial":
+        return "text_geospatial_or_placeholder"
     if metadata.get("looks_text"):
         return "text_decodable"
     return "binary_or_unknown"
@@ -231,6 +297,8 @@ def _content_profile(rough_category: str, concrete_format: str, metadata: dict[s
 def _binary_signature(path: Path, header: bytes, options: RunOptions) -> LayerEvidence | None:
     if header.startswith(b"%PDF-"):
         return _signature("content", "document", "PDF", "strong", "magic:%PDF")
+    if header.startswith((b"{\\rtf", b"{\\RTF")):
+        return _signature("content", "structured_text", "RTF", "strong", "magic:RTF")
     if header.startswith(b"\x89PNG\r\n\x1a\n"):
         return _signature("content", "image", "PNG", "strong", "magic:PNG")
     if header.startswith(b"\xff\xd8\xff"):
@@ -413,4 +481,3 @@ def _looks_like_delimited(text: str, delimiter: str) -> bool:
         return False
     counts = [line.count(delimiter) for line in lines]
     return max(counts, default=0) > 0 and len(set(counts[: min(5, len(counts))])) == 1
-

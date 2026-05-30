@@ -58,6 +58,7 @@ class LayerEvidence:
 @dataclass
 class Classification:
     extension_hint: LayerEvidence
+    name_hint: LayerEvidence
     mime_hint: LayerEvidence
     content_signature: LayerEvidence
     rough_category: str
@@ -71,6 +72,7 @@ class Classification:
     def to_dict(self) -> dict[str, Any]:
         return {
             "extension_hint": self.extension_hint.to_dict(),
+            "name_hint": self.name_hint.to_dict(),
             "mime_hint": self.mime_hint.to_dict(),
             "content_signature": self.content_signature.to_dict(),
             "rough_category": self.rough_category,
@@ -95,6 +97,9 @@ class ConversionResult:
     text: str
     converter_used: str
     extraction_methods_used: list[str] = field(default_factory=list)
+    llm_used: bool = False
+    ocr_used: bool = False
+    vlm_used: bool = False
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)

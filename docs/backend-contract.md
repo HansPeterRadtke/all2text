@@ -40,6 +40,33 @@ backends, this must be the decoded source text without extra explanations. Put p
 
 For placeholder backends, the text should clearly say what was recorded and what was not extracted.
 
+`ConversionResult` also carries:
+
+- `converter_used`: stable backend name;
+- `extraction_methods_used`: ordered method identifiers;
+- `llm_used`, `ocr_used`, `vlm_used`: truthful booleans for optional provider usage;
+- `errors` and `warnings`: explicit recoverable and non-recoverable issues;
+- `metadata`: JSON-safe or JSON-normalizable backend metadata;
+- `limitations`: human-readable limitations emitted into manifests and reports.
+
+The core renderer JSON-normalizes backend metadata, but backends should still avoid huge values.
+Prefer compact counts, previews, and paths over embedding large raw payloads.
+
+## Optional Provider Backends
+
+Optional integrations should follow a strict truthfulness contract:
+
+- If MarkItDown, textract, pypdf, python-docx, openpyxl, or python-pptx is used, record library name,
+  version when practical, extraction method, and any skipped embedded assets.
+- If OCR is used, record engine/provider, preprocessing, confidence, discard rules, and whether text
+  was actually accepted.
+- If a VLM or local llama.cpp provider is used, record endpoint/model identifier, request mode, and
+  whether the result came from the provider or a fallback.
+- If ffprobe/ffmpeg is used, keep command timeouts and include stderr/exit warnings without failing
+  the whole tree when a single media file is invalid.
+- If CAD, scientific, geospatial, database, or document-intelligence libraries are used, keep file
+  opening read-only and summarize schemas/objects before dumping large data.
+
 ## Future Backend Targets
 
 The registry is ready for:
@@ -49,8 +76,7 @@ The registry is ready for:
 - pypdf/python-docx/openpyxl/python-pptx native document backends;
 - Tesseract/PaddleOCR and document intelligence services;
 - `ffprobe` plus speech transcription;
-- VLM image descriptions;
+- local llama.cpp text and vision providers for VLM image descriptions and text synthesis;
 - HDF5/NetCDF/FITS/Parquet readers;
 - CAD parsers such as ezdxf;
 - specialist mail, ebook, and database parsers.
-

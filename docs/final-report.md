@@ -71,3 +71,31 @@ d40e138 Bootstrap all2text package
 The initial commit was pushed to `origin/master`. The operational report is stored under
 `/data/var/codex_logs/all2text_bootstrap_20260530.md`.
 
+## 2026-05-30 Parity Update
+
+This follow-up compared the package again against `/data/src/github/devtests/rag_tests` with special
+attention to `rag_tests/rag_tests/universal.py`, CLI wiring, converter behavior, metadata handling,
+detection/classification, reports, and universal converter tests.
+
+Implemented additions:
+
+- ACL summary collection with safe warnings when `getfacl` is unavailable.
+- Recursive JSON-safe manifest/conversion metadata rendering for paths, dataclasses, bytes,
+  datetimes, sets, exceptions, and platform objects.
+- Layered name hints for extensionless convention files such as `Makefile`, `Dockerfile`, `README`,
+  `LICENSE`, and related files.
+- Classification precedence so generic printable text does not override more specific extension/name
+  evidence, while strong content signatures still override misleading extensions.
+- RTF structured-text preservation with lightweight metadata.
+- EML original source preservation alongside parsed header/body/attachment metadata.
+- Binary geospatial placeholder behavior while preserving GeoJSON/KML text.
+- BZIP2/XZ compressed stream summaries.
+- Explicit image/media placeholder status for OCR, VLM, chart, document, transcription, and
+  frame/scene analysis when no provider is configured.
+- Output file reservation before backend conversion.
+- Manifest `converter_metadata` entries.
+- Expanded parity tests.
+- Dedicated llama.cpp/model setup documentation for external Jetson model artifacts.
+
+Verification for this update is tracked in `docs/operational-log.md` and the runtime log
+`/data/var/codex_logs/all2text_20260530T104100Z.md`.

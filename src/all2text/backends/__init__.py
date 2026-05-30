@@ -11,6 +11,7 @@ from all2text.backends.email import EmailBackend
 from all2text.backends.executable import ExecutablePlaceholderBackend
 from all2text.backends.filesystem import FilesystemBackend
 from all2text.backends.font import FontPlaceholderBackend
+from all2text.backends.geospatial import GeospatialPlaceholderBackend
 from all2text.backends.image import ImagePlaceholderBackend
 from all2text.backends.media import MediaPlaceholderBackend
 from all2text.backends.scientific import ScientificPlaceholderBackend
@@ -28,9 +29,9 @@ __all__ = [
     "ExecutablePlaceholderBackend",
     "FilesystemBackend",
     "FontPlaceholderBackend",
+    "GeospatialPlaceholderBackend",
     "ImagePlaceholderBackend",
     "MediaPlaceholderBackend",
     "ScientificPlaceholderBackend",
     "TextBackend",
 ]
-

@@ -5,7 +5,6 @@ TEXTUAL_CATEGORIES = {
     "structured_text",
     "source_code",
     "notebook",
-    "geospatial",
 }
 
 PLACEHOLDER_CATEGORIES = {
@@ -21,6 +20,7 @@ PLACEHOLDER_CATEGORIES = {
     "email",
     "ebook",
     "font",
+    "geospatial",
     "executable_or_binary",
     "disk_image_or_container",
     "compressed",
@@ -86,7 +86,7 @@ EXTENSION_HINTS: dict[str, tuple[str, str]] = {
     ".ini": ("structured_text", "INI"),
     ".csv": ("structured_text", "CSV"),
     ".tsv": ("structured_text", "TSV"),
-    ".rtf": ("document", "RTF"),
+    ".rtf": ("structured_text", "RTF"),
     ".pdf": ("document", "PDF"),
     ".docx": ("document", "DOCX"),
     ".doc": ("document", "DOC"),
@@ -185,8 +185,22 @@ EXTENSION_HINTS: dict[str, tuple[str, str]] = {
 }
 
 MIME_HINTS: dict[str, tuple[str, str]] = {
+    "application/json": ("structured_text", "JSON"),
+    "application/jsonl": ("structured_text", "JSON Lines"),
+    "application/ndjson": ("structured_text", "JSON Lines"),
+    "application/x-ndjson": ("structured_text", "JSON Lines"),
+    "application/xml": ("structured_text", "XML"),
+    "text/xml": ("structured_text", "XML"),
+    "text/html": ("structured_text", "HTML"),
+    "text/markdown": ("structured_text", "Markdown"),
+    "text/csv": ("structured_text", "CSV"),
+    "text/tab-separated-values": ("structured_text", "TSV"),
+    "application/x-yaml": ("structured_text", "YAML"),
+    "application/yaml": ("structured_text", "YAML"),
+    "text/yaml": ("structured_text", "YAML"),
     "application/pdf": ("document", "PDF"),
-    "application/rtf": ("document", "RTF"),
+    "application/rtf": ("structured_text", "RTF"),
+    "text/rtf": ("structured_text", "RTF"),
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ("document", "DOCX"),
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ("spreadsheet", "XLSX"),
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": ("presentation", "PPTX"),
@@ -230,4 +244,3 @@ MIME_HINTS: dict[str, tuple[str, str]] = {
     "application/x-sharedlib": ("executable_or_binary", "Shared library"),
     "application/octet-stream": ("executable_or_binary", "raw binary"),
 }
-

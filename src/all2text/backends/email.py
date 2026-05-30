@@ -5,6 +5,7 @@ from email.parser import BytesParser
 from pathlib import Path
 
 from all2text.backends.binary import binary_summary_text
+from all2text.backends.text import decode_text_bytes
 from all2text.models import Classification, ConversionContext, ConversionResult
 
 
@@ -24,14 +25,17 @@ class EmailBackend:
     ) -> ConversionResult:
         if classification.concrete_format.upper() in {"EML", "MBOX"}:
             parsed, warnings = parse_email(path)
+            raw = path.read_bytes()
+            raw_text, decode_metadata, decode_warnings = decode_text_bytes(raw)
+            warnings.extend(decode_warnings)
             limitation = "Email attachments are listed by metadata only; attached files are not recursively extracted."
-            text = render_email(parsed, limitation)
+            text = render_email(parsed, limitation, raw_text)
             return ConversionResult(
                 text=text,
                 converter_used=self.name,
-                extraction_methods_used=["stdlib_email_parse"],
+                extraction_methods_used=["stdlib_email_parse", "original_email_source_preservation"],
                 warnings=warnings,
-                metadata={"email": parsed},
+                metadata={"email": parsed, "source_decode": decode_metadata},
                 limitations=[limitation],
             )
         limitation = "This email container format requires a specialist parser; core all2text records safe metadata only."
@@ -90,7 +94,7 @@ def parse_email(path: Path) -> tuple[dict[str, object], list[str]]:
     }, warnings
 
 
-def render_email(parsed: dict[str, object], limitation: str) -> str:
+def render_email(parsed: dict[str, object], limitation: str, raw_text: str | None = None) -> str:
     lines = ["Email message:", f"Limitation: {limitation}", "", "Headers:"]
     headers = parsed.get("headers")
     if isinstance(headers, dict) and headers:
@@ -102,5 +106,8 @@ def render_email(parsed: dict[str, object], limitation: str) -> str:
         lines.append(f"- {attachment}")
     body = str(parsed.get("plain_body") or "")
     lines.extend(["", "Plain text body:", body if body else "<none>"])
+    if raw_text is not None:
+        return "\n".join(lines).rstrip() + "\n\nOriginal message source:\n" + raw_text + (
+            "" if raw_text.endswith("\n") else "\n"
+        )
     return "\n".join(lines).rstrip() + "\n"
-

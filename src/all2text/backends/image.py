@@ -31,6 +31,14 @@ class ImagePlaceholderBackend:
         )
         image_metadata = image_metadata_light(path, classification, ctx)
         extra = [f"- limitation: {limitation}"]
+        extra.extend(
+            [
+                "- ocr_status: not_yet_run_no_ocr_backend_configured",
+                "- vlm_status: not_yet_run_no_vision_language_backend_configured",
+                "- chart_analysis_status: not_yet_run_no_chart_backend_configured",
+                "- document_image_analysis_status: not_yet_run_no_document_intelligence_backend_configured",
+            ]
+        )
         if image_metadata:
             extra.append("- image_metadata: " + repr(image_metadata))
         text = binary_summary_text(path, classification, ctx, heading="Image safe summary", extra_lines=extra)
@@ -44,14 +52,18 @@ class ImagePlaceholderBackend:
                 converter_used=self.name,
                 extraction_methods_used=methods + ["svg_text_preservation"],
                 warnings=warnings,
-                metadata={"image": image_metadata, "svg_decode": decode_meta},
+                metadata={
+                    "image": image_metadata,
+                    "svg_decode": decode_meta,
+                    "analysis_hooks": placeholder_analysis_hooks(),
+                },
                 limitations=[limitation],
             )
         return ConversionResult(
             text=text,
             converter_used=self.name,
             extraction_methods_used=methods,
-            metadata={"image": image_metadata},
+            metadata={"image": image_metadata, "analysis_hooks": placeholder_analysis_hooks()},
             limitations=[limitation],
         )
 
@@ -78,6 +90,15 @@ def image_metadata_light(path: Path, classification: Classification, ctx: Conver
     except Exception as exc:
         return {"metadata_error": str(exc)}
     return {}
+
+
+def placeholder_analysis_hooks() -> dict[str, Any]:
+    return {
+        "ocr": {"configured": False, "attempted": False},
+        "vlm": {"configured": False, "attempted": False},
+        "chart_analysis": {"configured": False, "attempted": False},
+        "document_intelligence": {"configured": False, "attempted": False},
+    }
 
 
 def jpeg_dimensions(path: Path) -> dict[str, int] | None:
@@ -114,4 +135,3 @@ def svg_dimensions(text: str) -> dict[str, Any]:
         if match:
             result[attr] = match.group(1)
     return result
-

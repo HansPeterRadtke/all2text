@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import bz2
 import gzip
 import json
+import lzma
 import tarfile
 import zipfile
 from pathlib import Path
@@ -45,6 +47,14 @@ class ArchiveBackend:
             listing_meta = gzip_summary(path)
             lines.extend(["GZIP stream:", *[f"- {key}: {value}" for key, value in listing_meta.items()]])
             methods.append("gzip_header_summary")
+        elif fmt == "bzip2" or suffix == ".bz2":
+            listing_meta = compressed_stream_summary(path, opener=bz2.open, label="bzip2")
+            lines.extend(["BZIP2 stream:", *[f"- {key}: {value}" for key, value in listing_meta.items()]])
+            methods.append("bzip2_stream_summary")
+        elif fmt == "xz" or suffix == ".xz":
+            listing_meta = compressed_stream_summary(path, opener=lzma.open, label="xz")
+            lines.extend(["XZ stream:", *[f"- {key}: {value}" for key, value in listing_meta.items()]])
+            methods.append("xz_stream_summary")
         else:
             listing_meta = {}
             lines.append("Archive listing: unsupported archive listing backend for this format.")
@@ -119,6 +129,20 @@ def gzip_summary(path: Path) -> dict[str, Any]:
     return result
 
 
+def compressed_stream_summary(path: Path, *, opener: Any, label: str) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "compressed_size": file_size(path),
+        "stream_format": label,
+        "nested_decompression": "metadata_peek_only",
+    }
+    try:
+        with opener(path, "rb") as handle:
+            result["first_uncompressed_bytes_hex"] = handle.read(64).hex()
+    except Exception as exc:
+        result["peek_error"] = str(exc)
+    return result
+
+
 def archive_member_safety(name: str) -> dict[str, Any]:
     warnings: list[str] = []
     pure = Path(name)
@@ -134,4 +158,3 @@ def _is_tar(path: Path) -> bool:
         return tarfile.is_tarfile(path)
     except Exception:
         return False
-

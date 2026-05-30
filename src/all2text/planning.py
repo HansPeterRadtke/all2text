@@ -84,12 +84,13 @@ def reserve_output_files(
             )
         occupied[casefold_key(actual)] = rel_text(entry.relative_path)
         output_rel = target_parent_rel / actual
+        output_path = target_root / output_rel
+        output_path.touch(exist_ok=True)
         planned[entry.relative_path] = PlannedOutput(
             source_relative_path=rel_text(entry.relative_path),
             target_relative_path=rel_text(output_rel),
-            output_path=target_root / output_rel,
+            output_path=output_path,
             collision=reason is not None,
             collision_reason=reason,
         )
     return planned, warnings
-

@@ -12,9 +12,13 @@ Core tests use only the Python standard library plus pytest.
 ## Checks
 
 ```bash
-python -m compileall -q src
-pytest
+python -m compileall -q src tests
+python -m pytest
 ```
+
+Use `python -m pytest` when the shell `pytest` executable is attached to a different interpreter or
+does not see the editable package. The repository also includes a root `conftest.py` bootstrap so
+older pytest executables can import the local `src` package during development.
 
 ## Test Coverage Goals
 
@@ -24,19 +28,24 @@ The test suite covers:
 - mirrored folder layout;
 - exact text preservation;
 - structured text preservation and parse metadata;
+- RTF preservation as structured text;
+- EML parsed metadata plus original source preservation;
+- name-hint classification for extensionless convention files;
 - extension/content mismatch classification;
+- generic-text-vs-extension classification precedence;
 - safe binary fallback;
-- archive listing and archive path safety;
+- archive listing, compressed stream summaries, and archive path safety;
 - manifest and report generation;
+- JSON-safe manifest/conversion metadata for custom backend values;
+- precreated output reservation before backend conversion;
 - symlink safety;
 - deterministic collision handling;
 - CLI and public API behavior;
 - registry selection;
-- placeholder coverage for image, audio, video, document, scientific, CAD, database, email, ebook,
-  font, executable, and container categories.
+- placeholder coverage for image, audio, video, document, scientific, geospatial, CAD, database,
+  email, ebook, font, executable, and container categories.
 
 ## Repository Hygiene
 
 Generated conversion outputs, caches, logs, temporary model files, and local runtime artifacts should
 not be committed. Runtime experiments belong under `/data/var`, not under the repository.
-

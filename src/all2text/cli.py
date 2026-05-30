@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 from all2text.api import run
+from all2text.jsonsafe import json_dumps
 from all2text.models import RunOptions
 from all2text.version import __version__
 
@@ -43,10 +43,9 @@ def main(argv: list[str] | None = None) -> int:
         max_archive_members=args.max_archive_members,
     )
     manifest = run(Path(args.source_folder), Path(args.target_folder), options=options)
-    print(json.dumps(manifest["summary"], indent=2, ensure_ascii=False))
+    print(json_dumps(manifest["summary"], indent=2))
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

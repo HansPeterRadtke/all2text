@@ -14,6 +14,7 @@ from all2text.backends import (
     ExecutablePlaceholderBackend,
     FilesystemBackend,
     FontPlaceholderBackend,
+    GeospatialPlaceholderBackend,
     ImagePlaceholderBackend,
     MediaPlaceholderBackend,
     ScientificPlaceholderBackend,
@@ -53,6 +54,7 @@ def build_default_registry() -> ConversionRegistry:
             MediaPlaceholderBackend(),
             DocumentPlaceholderBackend(),
             ScientificPlaceholderBackend(),
+            GeospatialPlaceholderBackend(),
             CadPlaceholderBackend(),
             FontPlaceholderBackend(),
             ExecutablePlaceholderBackend(),
@@ -60,4 +62,3 @@ def build_default_registry() -> ConversionRegistry:
             BinaryFallbackBackend(),
         ]
     )
-

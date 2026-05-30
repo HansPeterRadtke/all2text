@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from all2text.jsonsafe import json_dumps, to_jsonable
 from all2text.models import Classification, ConversionResult, PlannedOutput, TreeEntry
 
 
@@ -18,6 +18,9 @@ def render_text_output(
     conversion = {
         "converter_used": result.converter_used,
         "extraction_methods_used": result.extraction_methods_used,
+        "llm_used": result.llm_used,
+        "ocr_used": result.ocr_used,
+        "vlm_used": result.vlm_used,
         "converter_metadata": result.metadata,
         "planned_output": planned_output_dict(planned),
         "scan_warnings": entry.scan_warnings,
@@ -28,11 +31,11 @@ def render_text_output(
     }
     return (
         "=== Metadata ===\n"
-        + json.dumps(metadata, indent=2, ensure_ascii=False, default=str)
+        + json_dumps(metadata, indent=2)
         + "\n\n=== Classification ===\n"
-        + json.dumps(classification.to_dict(), indent=2, ensure_ascii=False, default=str)
+        + json_dumps(classification.to_dict(), indent=2)
         + "\n\n=== Conversion ===\n"
-        + json.dumps(conversion, indent=2, ensure_ascii=False, default=str)
+        + json_dumps(conversion, indent=2)
         + "\n\n=== Extracted Content ===\n"
         + result.text
     )
@@ -41,11 +44,10 @@ def render_text_output(
 def planned_output_dict(planned: PlannedOutput) -> dict[str, Any]:
     data = asdict(planned)
     data["output_path"] = str(planned.output_path)
-    return data
+    return to_jsonable(data)
 
 
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", errors="surrogateescape", newline="") as handle:
         handle.write(text)
-
