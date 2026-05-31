@@ -40,6 +40,10 @@ name = "none"
 enabled = false
 language = "eng"
 timeout_seconds = 30
+preprocess = "none"
+min_characters = 4
+min_alnum_ratio = 0.35
+min_confidence = 35
 auto_invoke = false
 
 [providers.vlm]
@@ -49,6 +53,8 @@ base_url = "http://127.0.0.1:14830/v1"
 model = "Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf"
 timeout_seconds = 120
 max_tokens = 300
+temperature = 0
+prompt = "Describe visible evidence only."
 auto_invoke = false
 
 [providers.llm_text]
@@ -58,6 +64,8 @@ base_url = "http://127.0.0.1:14829/v1"
 model = "Qwen2.5-14B-Instruct-Q4_K_M.gguf"
 timeout_seconds = 120
 max_tokens = 512
+temperature = 0
+prompt = "Summarize extracted text using only supplied evidence."
 auto_invoke = false
 
 [providers.chart]
@@ -66,10 +74,15 @@ enabled = false
 specialist = "none"
 model_path = ""
 embedded_images_enabled = false
+confidence_threshold = 0.6
 
 [providers.document_intelligence]
 name = "none"
 enabled = false
+endpoint = ""
+api_key_env = ""
+timeout_seconds = 120
+auto_invoke = false
 
 [providers.speech]
 name = "none"
@@ -77,10 +90,19 @@ enabled = false
 transcribe = false
 translate = false
 language_detection = false
+model_path = ""
+device = "auto"
+timeout_seconds = 300
+auto_invoke = false
 
 [providers.video_frames]
 name = "none"
 enabled = false
 sample_frames = false
+max_frames = 5
+interval_seconds = 10
+output_format = "png"
+timeout_seconds = 120
+auto_invoke = false
 ocr = false
 vlm = false

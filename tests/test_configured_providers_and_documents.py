@@ -56,6 +56,41 @@ def test_image_provider_configuration_records_vlm_without_requiring_server(tmp_p
     assert "vlm_call_skipped_auto_invoke_false" in record["warnings"]
 
 
+def test_manifest_records_global_provider_statuses_without_matching_files(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    (source / "notes.txt").write_text("plain text\n", encoding="utf-8")
+    config = config_from_dict(
+        {
+            "providers": {
+                "vlm": {
+                    "name": "openai_compatible",
+                    "enabled": True,
+                    "base_url": "http://127.0.0.1:14830/v1",
+                    "model": "local-vlm",
+                    "auto_invoke": False,
+                },
+                "video_frames": {
+                    "name": "ffmpeg",
+                    "enabled": True,
+                    "sample_frames": True,
+                    "max_frames": 3,
+                    "auto_invoke": False,
+                },
+            }
+        }
+    )
+
+    manifest = run(source, target, options=make_options(), config=config)
+
+    statuses = {status["name"]: status for status in manifest["provider_statuses"]}
+    assert statuses["vlm"]["enabled"] is True
+    assert statuses["vlm"]["details"]["model"] == "local-vlm"
+    assert statuses["video_frames"]["enabled"] is True
+    assert statuses["video_frames"]["details"]["sample_frames"] is True
+
+
 def test_docx_native_extraction_when_dependency_available(tmp_path: Path) -> None:
     docx = pytest.importorskip("docx")
     source = tmp_path / "source"
@@ -111,6 +146,46 @@ def test_xlsx_native_extraction_preserves_sheets_formulas_and_values(tmp_path: P
     assert record["converter_metadata"]["formula_count"] == 2
 
 
+def test_xlsx_module_params_limit_cells_and_skip_hidden_sheets(tmp_path: Path) -> None:
+    openpyxl = pytest.importorskip("openpyxl")
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Visible"
+    sheet["A1"] = "first"
+    sheet["A2"] = "second"
+    hidden = workbook.create_sheet("HiddenInputs")
+    hidden.sheet_state = "hidden"
+    hidden["A1"] = "secret"
+    workbook.save(source / "limited.xlsx")
+    config = config_from_dict(
+        {
+            "modules": {
+                "spreadsheet": {
+                    "backend": "document_native_backend",
+                    "include_hidden_sheets": False,
+                    "max_cells_per_sheet": 1,
+                }
+            }
+        }
+    )
+
+    manifest = run(source, target, options=make_options(), config=config)
+
+    record = entry(manifest, "limited.xlsx")
+    text = (target / "limited.xlsx.txt").read_text(encoding="utf-8")
+    assert record["converter_used"] == "xlsx_native_backend"
+    assert "coordinate=A1" in text
+    assert "coordinate=A2" not in text
+    assert "Worksheet 2: HiddenInputs" in text
+    assert "secret" not in text
+    assert record["converter_metadata"]["skipped_hidden_sheets"] == ["HiddenInputs"]
+    assert record["converter_metadata"]["truncated_sheets"] == ["Visible"]
+    assert any("xlsx_cells_truncated" in warning for warning in record["warnings"])
+
+
 def test_pptx_native_extraction_when_dependency_available(tmp_path: Path) -> None:
     pptx = pytest.importorskip("pptx")
     source = tmp_path / "source"
@@ -147,6 +222,76 @@ def test_pdf_native_text_extraction_when_dependency_available(tmp_path: Path) ->
     assert record["converter_used"] == "pdf_native_backend"
     assert "Hello PDF" in text
     assert record["converter_metadata"]["native_text_characters"] > 0
+
+
+def test_pdf_module_params_limit_pages(tmp_path: Path) -> None:
+    pypdf = pytest.importorskip("pypdf")
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.add_blank_page(width=612, height=792)
+    with (source / "two_pages.pdf").open("wb") as handle:
+        writer.write(handle)
+    config = config_from_dict(
+        {
+            "modules": {
+                "document": {
+                    "backend": "document_native_backend",
+                    "max_pdf_pages": 1,
+                }
+            }
+        }
+    )
+
+    manifest = run(source, target, options=make_options(), config=config)
+
+    record = entry(manifest, "two_pages.pdf")
+    text = (target / "two_pages.pdf.txt").read_text(encoding="utf-8")
+    assert record["converter_used"] == "pdf_native_backend"
+    assert "Page 1:" in text
+    assert "Page 2:" not in text
+    assert "Skipped pages due to max_pdf_pages: 1" in text
+    assert record["converter_metadata"]["page_count"] == 2
+    assert record["converter_metadata"]["extracted_page_count"] == 1
+    assert record["converter_metadata"]["skipped_page_count"] == 1
+
+
+def test_video_frame_provider_plan_is_recorded_without_running_ffmpeg(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    (source / "clip.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42")
+    config = config_from_dict(
+        {
+            "providers": {
+                "video_frames": {
+                    "name": "ffmpeg",
+                    "enabled": True,
+                    "sample_frames": True,
+                    "max_frames": 3,
+                    "interval_seconds": 2,
+                    "output_format": "jpg",
+                    "auto_invoke": False,
+                    "ocr": True,
+                    "vlm": True,
+                }
+            }
+        }
+    )
+
+    manifest = run(source, target, options=make_options(), config=config)
+
+    record = entry(manifest, "clip.mp4")
+    stages = record["converter_metadata"]["stages"]
+    assert stages["frame_sampling"]["planned"] is True
+    assert stages["frame_sampling"]["attempted"] is False
+    assert stages["frame_sampling"]["max_frames"] == 3
+    assert stages["frame_sampling"]["interval_seconds"] == 2.0
+    assert stages["frame_sampling"]["output_format"] == "jpg"
+    assert stages["frame_ocr"]["planned"] is True
+    assert stages["frame_vlm"]["planned"] is True
 
 
 def test_legacy_xls_truthful_fallback_when_xlrd_absent(tmp_path: Path) -> None:

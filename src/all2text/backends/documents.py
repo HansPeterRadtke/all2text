@@ -7,6 +7,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from all2text.backends.binary import binary_summary_text
+from all2text.config import config_for_context
 from all2text.models import Classification, ConversionContext, ConversionResult
 
 WORD_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
@@ -193,6 +194,9 @@ def convert_xlsx(
     classification: Classification,
     ctx: ConversionContext,
 ) -> ConversionResult:
+    params = document_module_params(ctx, classification)
+    include_hidden_sheets = bool_param(params.get("include_hidden_sheets"), True)
+    max_cells_per_sheet = positive_int(params.get("max_cells_per_sheet"))
     try:
         from openpyxl import load_workbook
     except Exception as exc:
@@ -217,15 +221,47 @@ def convert_xlsx(
     formula_count = 0
     chart_count = 0
     hidden_sheets: list[str] = []
+    skipped_hidden_sheets: list[str] = []
+    truncated_sheets: list[str] = []
     for sheet_index, sheet in enumerate(workbook.worksheets, start=1):
         value_sheet = workbook_values[sheet.title]
         if sheet.sheet_state != "visible":
             hidden_sheets.append(sheet.title)
-        sheet_cells = non_empty_cells(sheet)
+            if not include_hidden_sheets:
+                skipped_hidden_sheets.append(sheet.title)
+                lines.extend(
+                    [
+                        "",
+                        f"Worksheet {sheet_index}: {sheet.title}",
+                        "- visibility: hidden",
+                        "- extraction: skipped_by_module_config",
+                    ]
+                )
+                continue
+        sheet_cells, truncated = non_empty_cells(sheet, max_cells=max_cells_per_sheet)
+        if truncated:
+            truncated_sheets.append(sheet.title)
         total_cells += len(sheet_cells)
         formula_count += sum(1 for cell in sheet_cells if is_formula(cell.value))
         chart_count += len(getattr(sheet, "_charts", []) or [])
-        lines.extend(xlsx_sheet_lines(sheet_index, sheet, value_sheet, workbook_values, sheet_cells))
+        lines.extend(
+            xlsx_sheet_lines(
+                sheet_index,
+                sheet,
+                value_sheet,
+                workbook_values,
+                sheet_cells,
+                truncated=truncated,
+            )
+        )
+    limitations: list[str] = []
+    warnings: list[str] = []
+    if skipped_hidden_sheets:
+        limitations.append("Hidden worksheets were skipped because spreadsheet.include_hidden_sheets=false.")
+        warnings.append("xlsx_hidden_sheets_skipped:" + ",".join(skipped_hidden_sheets))
+    if truncated_sheets:
+        limitations.append("Worksheet cell extraction was limited by spreadsheet.max_cells_per_sheet.")
+        warnings.append("xlsx_cells_truncated:" + ",".join(truncated_sheets))
     return ConversionResult(
         text="\n".join(lines).rstrip() + "\n",
         converter_used="xlsx_native_backend",
@@ -241,10 +277,15 @@ def convert_xlsx(
             "format": "XLSX",
             "sheet_names": [ws.title for ws in workbook.worksheets],
             "hidden_sheets": hidden_sheets,
+            "skipped_hidden_sheets": skipped_hidden_sheets,
             "non_empty_cell_count": total_cells,
             "formula_count": formula_count,
             "chart_count": chart_count,
+            "max_cells_per_sheet": max_cells_per_sheet,
+            "truncated_sheets": truncated_sheets,
         },
+        warnings=warnings,
+        limitations=limitations,
     )
 
 
@@ -309,6 +350,8 @@ def convert_pdf(
     classification: Classification,
     ctx: ConversionContext,
 ) -> ConversionResult:
+    params = document_module_params(ctx, classification)
+    max_pdf_pages = positive_int(params.get("max_pdf_pages"))
     try:
         from pypdf import PdfReader
     except Exception as exc:
@@ -328,7 +371,11 @@ def convert_pdf(
     total_chars = 0
     image_count = 0
     methods = ["pypdf_text_extraction"]
-    for page_number, page in enumerate(reader.pages, start=1):
+    page_count = len(reader.pages)
+    extract_count = min(page_count, max_pdf_pages) if max_pdf_pages else page_count
+    skipped_pages = max(0, page_count - extract_count)
+    for page_number in range(1, extract_count + 1):
+        page = reader.pages[page_number - 1]
         try:
             text = page.extract_text() or ""
         except Exception as exc:
@@ -349,11 +396,22 @@ def convert_pdf(
         limitations.append("No native PDF text was found; scanned-page OCR requires configured OCR/rendering providers.")
     if image_count:
         limitations.append("Embedded PDF images are counted; deep image analysis is not claimed unless image providers run.")
+    if skipped_pages:
+        limitations.append("PDF page extraction was limited by document.max_pdf_pages.")
+        lines.extend(["", f"Skipped pages due to max_pdf_pages: {skipped_pages}"])
     return ConversionResult(
         text="\n".join(lines).rstrip() + "\n",
         converter_used="pdf_native_backend",
         extraction_methods_used=methods,
-        metadata={"format": "PDF", "page_count": len(reader.pages), "native_text_characters": total_chars, "image_count": image_count},
+        metadata={
+            "format": "PDF",
+            "page_count": page_count,
+            "extracted_page_count": extract_count,
+            "skipped_page_count": skipped_pages,
+            "native_text_characters": total_chars,
+            "image_count": image_count,
+            "max_pdf_pages": max_pdf_pages,
+        },
         limitations=limitations,
     )
 
@@ -364,6 +422,8 @@ def convert_odf(
     classification: Classification,
     ctx: ConversionContext,
 ) -> ConversionResult:
+    params = document_module_params(ctx, classification)
+    max_text_blocks = positive_int(params.get("max_text_blocks"))
     try:
         with zipfile.ZipFile(path) as archive:
             content = archive.read("content.xml")
@@ -374,7 +434,7 @@ def convert_odf(
     except Exception as exc:
         return document_fallback(path, classification, ctx, dependency_error=f"OpenDocument XML parse failed:{exc}")
     fmt = classification.concrete_format.upper()
-    text_blocks = odf_text_blocks(root)
+    text_blocks, truncated = odf_text_blocks(root, max_blocks=max_text_blocks)
     lines = [
         f"File: {rel_path.name}",
         f"Description: {fmt} OpenDocument content.xml text extraction.",
@@ -388,8 +448,20 @@ def convert_odf(
         text="\n".join(lines).rstrip() + "\n",
         converter_used="opendocument_native_backend",
         extraction_methods_used=["zip_content_xml_parse", "opendocument_text_nodes"],
-        metadata={"format": fmt, "text_block_count": len(text_blocks)},
-        limitations=["OpenDocument extraction is text-node oriented; layout, styles, formulas, and embedded media are not deeply extracted."],
+        metadata={
+            "format": fmt,
+            "text_block_count": len(text_blocks),
+            "max_text_blocks": max_text_blocks,
+            "truncated": truncated,
+        },
+        limitations=[
+            "OpenDocument extraction is text-node oriented; layout, styles, formulas, and embedded media are not deeply extracted.",
+            *(
+                ["OpenDocument text blocks were limited by document.max_text_blocks."]
+                if truncated
+                else []
+            ),
+        ],
     )
 
 
@@ -563,7 +635,15 @@ def defined_names_lines(workbook: Any) -> list[str]:
     return [f"- defined_names_count: {count}", *lines]
 
 
-def xlsx_sheet_lines(sheet_index: int, sheet: Any, value_sheet: Any, workbook_values: Any, sheet_cells: list[Any]) -> list[str]:
+def xlsx_sheet_lines(
+    sheet_index: int,
+    sheet: Any,
+    value_sheet: Any,
+    workbook_values: Any,
+    sheet_cells: list[Any],
+    *,
+    truncated: bool = False,
+) -> list[str]:
     lines = [
         "",
         f"Worksheet {sheet_index}: {sheet.title}",
@@ -579,6 +659,8 @@ def xlsx_sheet_lines(sheet_index: int, sheet: Any, value_sheet: Any, workbook_va
     lines.append(f"- auto_filter: {format_value(sheet.auto_filter.ref)}")
     lines.extend(xlsx_table_lines(sheet))
     lines.append(f"- non_empty_cells_count: {len(sheet_cells)}")
+    if truncated:
+        lines.append("- extraction_truncated: true")
     if sheet_cells:
         lines.append("- cells:")
     cross_sheet_refs: set[str] = set()
@@ -653,13 +735,15 @@ def xlsx_chart_lines(sheet: Any, workbook_values: Any) -> list[str]:
     return lines
 
 
-def non_empty_cells(sheet: Any) -> list[Any]:
+def non_empty_cells(sheet: Any, *, max_cells: int | None = None) -> tuple[list[Any], bool]:
     cells: list[Any] = []
     for row in sheet.iter_rows():
         for cell in row:
             if cell.value not in (None, ""):
                 cells.append(cell)
-    return cells
+                if max_cells and len(cells) >= max_cells:
+                    return cells, True
+    return cells, False
 
 
 def is_formula(value: Any) -> bool:
@@ -766,13 +850,20 @@ def pdf_metadata_text(reader: Any) -> str:
     return "; ".join(f"{key}={value!r}" for key, value in metadata.items())
 
 
-def odf_text_blocks(root: ET.Element) -> list[str]:
+def odf_text_blocks(root: ET.Element, *, max_blocks: int | None = None) -> tuple[list[str], bool]:
     blocks: list[str] = []
+
+    def add(block: str) -> bool:
+        if not block:
+            return False
+        blocks.append(block)
+        return bool(max_blocks and len(blocks) >= max_blocks)
+
     for tag in ("text:p", "text:h"):
         for element in root.findall(f".//{tag}", ODF_NS):
             text = "".join(element.itertext()).strip()
-            if text:
-                blocks.append(text)
+            if add(text):
+                return blocks, True
     for table in root.findall(".//table:table", ODF_NS):
         table_name = table.attrib.get(f"{{{ODF_NS['table']}}}name", "table")
         rows: list[str] = []
@@ -782,8 +873,9 @@ def odf_text_blocks(root: ET.Element) -> list[str]:
             if values:
                 rows.append(" | ".join(values))
         if rows:
-            blocks.append(f"{table_name}: " + " / ".join(rows))
-    return blocks
+            if add(f"{table_name}: " + " / ".join(rows)):
+                return blocks, True
+    return blocks, False
 
 
 def format_value(value: Any) -> str:
@@ -795,3 +887,26 @@ def format_value(value: Any) -> str:
         except Exception:
             pass
     return repr(value)
+
+
+def document_module_params(ctx: ConversionContext, classification: Classification) -> dict[str, Any]:
+    cfg = config_for_context(ctx.config)
+    return cfg.module_params(classification.rough_category, classification.concrete_format.casefold())
+
+
+def positive_int(value: Any) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def bool_param(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
+    return bool(value)

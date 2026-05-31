@@ -11,6 +11,7 @@ from all2text.jsonsafe import json_dumps, to_jsonable
 from all2text.metadata import collect_metadata, copy_supported_metadata
 from all2text.models import Classification, ConversionContext, ConversionResult, RunOptions, TreeEntry
 from all2text.planning import create_target_directories, reserve_output_files
+from all2text.providers import provider_statuses
 from all2text.registry import ConversionRegistry, build_default_registry
 from all2text.rendering import planned_output_dict, render_text_output, write_text
 from all2text.reporting import build_summary, manifest_paths, render_report
@@ -79,6 +80,7 @@ def run(
             "reject_target_inside_source": options.reject_target_inside_source,
         },
         "config": config.to_dict(),
+        "provider_statuses": [status.to_dict() for status in provider_statuses(config)],
         "registry": {"backends": registry.names(), "preferred_backends": registry.preferred_backends()},
         "directory_collisions": directory_collisions,
         "planning_warnings": planning_warnings,

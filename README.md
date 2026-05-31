@@ -97,6 +97,12 @@ providers such as OCR, local llama.cpp VLM, speech transcription, frame sampling
 specialists. Provider parameters are carried into manifests even when the provider is disabled or
 unavailable.
 
+Module config can also bound native extraction without swapping code. For example,
+`[modules.document] max_pdf_pages = 50` limits PDF page extraction, while
+`[modules.spreadsheet] max_cells_per_sheet = 10000` and `include_hidden_sheets = false` control
+XLSX output size and hidden-sheet handling. Skips and limits are recorded in warnings, limitations,
+and converter metadata.
+
 ## Current Format Coverage
 
 Native core extraction:
@@ -109,11 +115,12 @@ Native core extraction:
   counts;
 - XLSX uses `openpyxl` when installed to emit all sheets, hidden sheets, dimensions, every non-empty
   cell, formulas, cached values when available, tables, filters, defined names, cross-sheet
-  references, chart metadata, and embedded-image anchors;
+  references, chart metadata, and embedded-image anchors; config can bound cells per sheet or skip
+  hidden-sheet extraction when needed;
 - PPTX uses `python-pptx` when installed to emit slide geometry, shapes, paragraphs, notes, and
   embedded-image counts;
 - PDF uses `pypdf` when installed to emit metadata, page count, native text per page, and image
-  counts; scanned-page OCR remains provider-configured work;
+  counts; config can cap extracted pages, and scanned-page OCR remains provider-configured work;
 - ODT/ODS/ODP are read as OpenDocument ZIP packages and content.xml text nodes are extracted where
   feasible;
 - ZIP/TAR/GZIP/BZIP2/XZ archives or streams are listed/summarized safely with path traversal
@@ -129,7 +136,9 @@ Safe placeholder coverage:
   binary geospatial, binary CAD, fonts, executables, disk images, unknown binaries, and specialist
   containers.
 
-Image and media outputs now include layered provider routing/status reports. They do not claim OCR,
+Image and media outputs now include layered provider routing/status reports. Top-level manifests
+also include configured provider statuses, so disabled/unavailable local llama.cpp, OCR, speech, and
+video-frame routes are visible even when no matching files are present. Outputs do not claim OCR,
 transcription, VLM understanding, chart values, CAD geometry analysis, or scientific array
 extraction unless a configured provider actually returns accepted evidence.
 

@@ -75,3 +75,39 @@ Final verification before commit:
 - `python -m pytest`: passed, 36 tests.
 - `pytest`: passed, 36 tests, with one warning from the older system pytest 6.2.5 about the unknown `pythonpath` config option. A root `conftest.py` keeps local `src` importable for that executable.
 - `python -m ruff check .`: not run; `ruff` is not installed in `/data/venv`.
+
+## 2026-05-31 configurable providers session
+
+Context:
+
+- Worktree: `/data/src/github/all2text`
+- Read-only reference allowed: `/data/src/github/devtests/rag_tests`
+- Baseline head: `ca21c9b Add configurable extraction providers`
+- Baseline status: `## master...origin/master`
+
+Baseline verification:
+
+- `python -m py_compile $(rg --files src/all2text -g '*.py')`: passed.
+- `pytest -q`: passed, 41 tests and 4 skipped.
+- `python -m ruff --version`: unavailable in the active environment.
+
+Implementation progress:
+
+- Added module parameter accessors and wired native document parameters into XLSX/PDF/OpenDocument
+  extraction.
+- Added top-level manifest provider statuses so configured OCR, VLM/local llama.cpp, chart,
+  document-intelligence, speech, and video-frame routes are visible even without matching files.
+- Expanded provider defaults for OCR quality knobs, VLM/text LLM prompt/runtime settings, chart
+  thresholds, document intelligence endpoint metadata, speech settings, and video frame sampling.
+- Added configured media stage plans for speech, language detection, translation, frame sampling,
+  frame OCR, and frame VLM without requiring model servers in tests.
+- Added tests for global provider statuses, XLSX/PDF module limits, and video frame planning.
+
+Verification:
+
+- `python -m py_compile $(rg --files src/all2text -g '*.py')`: passed.
+- `pytest tests/test_configured_providers_and_documents.py -q`: passed, 5 tests and 6 skipped.
+- `python -m compileall -q src tests`: passed.
+- `pytest -q`: passed, 43 tests and 6 skipped, with the existing pytest warning about `pythonpath`.
+- `git diff --check`: passed.
+- `python -m ruff check .`: not run; `ruff` is not installed in `/data/venv`.

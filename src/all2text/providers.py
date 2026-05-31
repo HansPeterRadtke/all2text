@@ -42,11 +42,16 @@ class RoutePlan:
 def provider_statuses(config: object | None, *, family: str | None = None) -> list[ProviderStatus]:
     cfg = config_for_context(config)
     statuses: list[ProviderStatus] = []
-    if family in {None, "image", "document", "chart"}:
+    if family in {None, "image", "document", "chart", "video"}:
         statuses.extend(
             [
                 ocr_status(cfg.provider("ocr")),
                 vlm_status(cfg.provider("vlm")),
+            ]
+        )
+    if family in {None, "image", "document", "chart"}:
+        statuses.extend(
+            [
                 chart_status(cfg.provider("chart")),
                 document_intelligence_status(cfg.provider("document_intelligence")),
             ]

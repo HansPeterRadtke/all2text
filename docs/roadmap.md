@@ -7,12 +7,13 @@ Near-term:
 - Optional PDF scanned-page rendering/OCR fallback with bounded external commands.
 - More complete OpenDocument spreadsheet/presentation handling.
 - Provider execution adapters for chart specialists and document intelligence.
+- Bounded video frame extraction execution for the configured frame plans now reported in metadata.
 - Geospatial schema/layer probes for GeoPackage and Shapefile with read-only libraries.
 
 Medium-term:
 
 - Audio transcription backend with clear model/provider metadata.
-- Video keyframe and frame-OCR backend.
+- Video frame OCR/VLM backend that consumes sampled frames and records per-frame evidence.
 - HDF5/NetCDF/FITS/Parquet schema and sample extractors.
 - CAD-specific DXF and STEP readers.
 - Rich EPUB chapter extraction.
@@ -21,7 +22,7 @@ Medium-term:
 
 Long-term:
 
-- Backend capability discovery and diagnostics.
+- Backend capability discovery beyond the current manifest-level provider status diagnostics.
 - Streaming manifests for very large trees.
 - Policy controls for recursive archive extraction into isolated work directories.
 - Optional document-intelligence and VLM provider integrations.

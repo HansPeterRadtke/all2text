@@ -36,6 +36,17 @@ class All2TextConfig:
         module = self.modules.get(family)
         return module.backend if module else default
 
+    def module_config(self, family: str) -> ModuleConfig:
+        return self.modules.get(family, ModuleConfig(backend=""))
+
+    def module_params(self, *families: str) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        for family in families:
+            module = self.modules.get(family)
+            if module:
+                params.update(module.params)
+        return params
+
     def provider(self, task: str) -> ProviderConfig:
         return self.providers.get(task, ProviderConfig())
 
@@ -85,6 +96,10 @@ DEFAULT_PROVIDERS: dict[str, ProviderConfig] = {
         params={
             "language": "eng",
             "timeout_seconds": 30,
+            "preprocess": "none",
+            "min_characters": 4,
+            "min_alnum_ratio": 0.35,
+            "min_confidence": 35,
             "auto_invoke": False,
         },
     ),
@@ -96,6 +111,8 @@ DEFAULT_PROVIDERS: dict[str, ProviderConfig] = {
             "model": "Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf",
             "timeout_seconds": 120,
             "max_tokens": 300,
+            "temperature": 0,
+            "prompt": "Describe visible evidence only.",
             "auto_invoke": False,
         },
     ),
@@ -107,6 +124,8 @@ DEFAULT_PROVIDERS: dict[str, ProviderConfig] = {
             "model": "Qwen2.5-14B-Instruct-Q4_K_M.gguf",
             "timeout_seconds": 120,
             "max_tokens": 512,
+            "temperature": 0,
+            "prompt": "Summarize extracted text using only supplied evidence.",
             "auto_invoke": False,
         },
     ),
@@ -117,18 +136,45 @@ DEFAULT_PROVIDERS: dict[str, ProviderConfig] = {
             "specialist": "none",
             "model_path": "",
             "embedded_images_enabled": False,
+            "confidence_threshold": 0.6,
         },
     ),
-    "document_intelligence": ProviderConfig(name="none", enabled=False, params={}),
+    "document_intelligence": ProviderConfig(
+        name="none",
+        enabled=False,
+        params={
+            "endpoint": "",
+            "api_key_env": "",
+            "timeout_seconds": 120,
+            "auto_invoke": False,
+        },
+    ),
     "speech": ProviderConfig(
         name="none",
         enabled=False,
-        params={"transcribe": False, "translate": False, "language_detection": False},
+        params={
+            "transcribe": False,
+            "translate": False,
+            "language_detection": False,
+            "model_path": "",
+            "device": "auto",
+            "timeout_seconds": 300,
+            "auto_invoke": False,
+        },
     ),
     "video_frames": ProviderConfig(
         name="none",
         enabled=False,
-        params={"sample_frames": False, "ocr": False, "vlm": False},
+        params={
+            "sample_frames": False,
+            "max_frames": 5,
+            "interval_seconds": 10,
+            "output_format": "png",
+            "timeout_seconds": 120,
+            "auto_invoke": False,
+            "ocr": False,
+            "vlm": False,
+        },
     ),
 }
 

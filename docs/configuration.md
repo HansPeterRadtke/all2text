@@ -38,6 +38,35 @@ The registry still verifies that a selected backend can handle the classified en
 selection falls back through the normal ordered registry. This lets text GeoJSON or text CAD stay
 exactly preserved while binary variants fall through to safe placeholders.
 
+Module tables can also carry human-readable parameters. Family keys such as `document` or
+`spreadsheet` apply broadly, and concrete-format keys such as `pdf` or `xlsx` can override or add
+format-specific knobs:
+
+```toml
+[modules.document]
+backend = "document_native_backend"
+max_pdf_pages = 50
+max_text_blocks = 2000
+
+[modules.spreadsheet]
+backend = "document_native_backend"
+include_hidden_sheets = true
+max_cells_per_sheet = 10000
+
+[modules.xlsx]
+backend = "document_native_backend"
+max_cells_per_sheet = 25000
+```
+
+Current native document parameters:
+
+- `document.max_pdf_pages`: limits PDF page text extraction; omitted or `0` means all pages.
+- `document.max_text_blocks`: limits OpenDocument text block output; omitted or `0` means all blocks.
+- `spreadsheet.include_hidden_sheets`: defaults to `true`; set `false` to list but not extract hidden sheets.
+- `spreadsheet.max_cells_per_sheet`: bounds non-empty XLSX cells emitted per worksheet.
+
+When a module limit skips content, the output and manifest record the limit, warning, and limitation.
+
 ## Provider Settings
 
 Providers are deliberately layered. A provider can be configured, unavailable, skipped, attempted,
@@ -49,6 +78,10 @@ name = "tesseract"
 enabled = true
 language = "eng"
 timeout_seconds = 30
+preprocess = "none"
+min_characters = 4
+min_alnum_ratio = 0.35
+min_confidence = 35
 auto_invoke = false
 
 [providers.vlm]
@@ -57,6 +90,8 @@ enabled = true
 base_url = "http://127.0.0.1:14830/v1"
 model = "Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf"
 max_tokens = 300
+temperature = 0
+prompt = "Describe visible evidence only."
 auto_invoke = false
 ```
 
@@ -69,9 +104,18 @@ Current core provider behavior:
 - VLM: OpenAI-compatible HTTP vision calls can be invoked when explicitly enabled.
 - Chart, document intelligence, speech, and video frame providers expose status and routing hooks;
   execution adapters remain roadmap unless a custom backend implements them.
+- Video frame settings (`sample_frames`, `max_frames`, `interval_seconds`, `output_format`, `ocr`,
+  and `vlm`) are reflected in per-video stage plans even when `auto_invoke=false`, so downstream
+  jobs can see exactly what would run and why it did not.
+- Speech settings (`transcribe`, `translate`, `language_detection`, `model_path`, `device`,
+  `timeout_seconds`) are reflected in audio/video stage plans with clear provider blockers.
 
 Custom keys are preserved in provider `params`, so local deployments can add model paths,
 temperature, prompt policy, tenant IDs, or tool-specific settings without changing the schema.
+
+The top-level manifest includes `provider_statuses` for the configured providers even if the run
+contains no image/audio/video files. Per-file image and media records also include family-specific
+provider statuses, route plans, and stage blockers.
 
 ## Truthfulness
 
