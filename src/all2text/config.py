@@ -142,11 +142,21 @@ RUN_OPTION_POSITIVE_INT_FIELDS = {
     "max_archive_members",
 }
 
+RUN_OPTION_BOOL_FIELDS = {
+    "use_file_command",
+    "copy_source_stat",
+    "reject_target_inside_source",
+}
+
 MODULE_NON_NEGATIVE_INT_PARAMS = {
     "max_ffprobe_json_chars",
     "max_pdf_pages",
     "max_text_blocks",
     "max_cells_per_sheet",
+}
+
+MODULE_BOOL_PARAMS = {
+    "include_hidden_sheets",
 }
 
 PROVIDER_POSITIVE_INT_PARAMS: dict[str, set[str]] = {
@@ -169,6 +179,16 @@ PROVIDER_RATIO_PARAMS: dict[str, set[str]] = {
 
 PROVIDER_PERCENT_PARAMS: dict[str, set[str]] = {
     "ocr": {"min_confidence"},
+}
+
+PROVIDER_BOOL_PARAMS: dict[str, set[str]] = {
+    "ocr": {"auto_invoke"},
+    "vlm": {"auto_invoke"},
+    "llm_text": {"auto_invoke"},
+    "chart": {"embedded_images_enabled"},
+    "document_intelligence": {"auto_invoke"},
+    "speech": {"transcribe", "translate", "language_detection", "auto_invoke"},
+    "video_frames": {"sample_frames", "auto_invoke", "ocr", "vlm"},
 }
 
 
@@ -289,7 +309,11 @@ def config_from_dict(data: dict[str, Any], *, source_path: str | None = None) ->
         raise ValueError(_config_error("config root must be a table", source_path))
     base = default_config()
     run_data = data.get("run", {})
-    run_options = _run_options_from_dict(run_data if run_data is not None else {}, base.options)
+    run_options = _run_options_from_dict(
+        run_data if run_data is not None else {},
+        base.options,
+        source_path=source_path,
+    )
     modules = dict(base.modules)
     module_data = data.get("modules", {})
     if module_data is None:
@@ -320,7 +344,11 @@ def config_from_dict(data: dict[str, Any], *, source_path: str | None = None) ->
             raise ValueError(_config_error(f"providers.{key} must be a table", source_path))
         current = providers.get(str(key), ProviderConfig())
         name = str(value.get("name", current.name))
-        enabled = _bool_value(value.get("enabled", current.enabled))
+        enabled = _coerce_bool(
+            value.get("enabled", current.enabled),
+            f"providers.{key}.enabled",
+            source_path=source_path,
+        )
         params = dict(current.params)
         params.update({str(k): v for k, v in value.items() if k not in {"name", "enabled"}})
         providers[str(key)] = ProviderConfig(name=name, enabled=enabled, params=params)
@@ -335,23 +363,53 @@ def config_from_dict(data: dict[str, Any], *, source_path: str | None = None) ->
     return config
 
 
-def _run_options_from_dict(data: dict[str, Any], defaults: RunOptions) -> RunOptions:
+def _run_options_from_dict(
+    data: dict[str, Any],
+    defaults: RunOptions,
+    *,
+    source_path: str | None = None,
+) -> RunOptions:
     if not isinstance(data, dict):
-        raise ValueError("run must be a table")
+        raise ValueError(_config_error("run must be a table", source_path))
     values = asdict(defaults)
     for key in values:
         if key in data:
-            values[key] = data[key]
+            field = f"run.{key}"
+            if key in RUN_OPTION_POSITIVE_INT_FIELDS:
+                values[key] = _coerce_int(
+                    data[key],
+                    field,
+                    source_path=source_path,
+                    minimum=1,
+                )
+            elif key in RUN_OPTION_BOOL_FIELDS:
+                values[key] = _coerce_bool(data[key], field, source_path=source_path)
+            else:
+                values[key] = data[key]
     return RunOptions(**values)
 
 
 def validate_config(config: All2TextConfig) -> None:
     for field_name in RUN_OPTION_POSITIVE_INT_FIELDS:
-        _require_int(
-            getattr(config.options, field_name),
-            f"run.{field_name}",
-            source_path=config.source_path,
-            minimum=1,
+        setattr(
+            config.options,
+            field_name,
+            _coerce_int(
+                getattr(config.options, field_name),
+                f"run.{field_name}",
+                source_path=config.source_path,
+                minimum=1,
+            ),
+        )
+    for field_name in RUN_OPTION_BOOL_FIELDS:
+        setattr(
+            config.options,
+            field_name,
+            _coerce_bool(
+                getattr(config.options, field_name),
+                f"run.{field_name}",
+                source_path=config.source_path,
+            ),
         )
     for family, module in config.modules.items():
         if module.backend not in KNOWN_BACKEND_NAMES:
@@ -365,11 +423,18 @@ def validate_config(config: All2TextConfig) -> None:
             )
         for key in MODULE_NON_NEGATIVE_INT_PARAMS:
             if key in module.params:
-                _require_int(
+                module.params[key] = _coerce_int(
                     module.params[key],
                     f"modules.{family}.{key}",
                     source_path=config.source_path,
                     minimum=0,
+                )
+        for key in MODULE_BOOL_PARAMS:
+            if key in module.params:
+                module.params[key] = _coerce_bool(
+                    module.params[key],
+                    f"modules.{family}.{key}",
+                    source_path=config.source_path,
                 )
     for task, provider in config.providers.items():
         allowed_names = ALLOWED_PROVIDER_NAMES.get(task)
@@ -392,7 +457,7 @@ def validate_config(config: All2TextConfig) -> None:
             )
         for key in PROVIDER_POSITIVE_INT_PARAMS.get(task, set()):
             if key in provider.params:
-                _require_int(
+                provider.params[key] = _coerce_int(
                     provider.params[key],
                     f"providers.{task}.{key}",
                     source_path=config.source_path,
@@ -400,7 +465,7 @@ def validate_config(config: All2TextConfig) -> None:
                 )
         for key in PROVIDER_POSITIVE_FLOAT_PARAMS.get(task, set()):
             if key in provider.params:
-                _require_float(
+                provider.params[key] = _coerce_float(
                     provider.params[key],
                     f"providers.{task}.{key}",
                     source_path=config.source_path,
@@ -409,7 +474,7 @@ def validate_config(config: All2TextConfig) -> None:
                 )
         for key in PROVIDER_RATIO_PARAMS.get(task, set()):
             if key in provider.params:
-                _require_float(
+                provider.params[key] = _coerce_float(
                     provider.params[key],
                     f"providers.{task}.{key}",
                     source_path=config.source_path,
@@ -418,35 +483,53 @@ def validate_config(config: All2TextConfig) -> None:
                 )
         for key in PROVIDER_PERCENT_PARAMS.get(task, set()):
             if key in provider.params:
-                _require_float(
+                provider.params[key] = _coerce_float(
                     provider.params[key],
                     f"providers.{task}.{key}",
                     source_path=config.source_path,
                     minimum=0.0,
                     maximum=100.0,
                 )
+        for key in PROVIDER_BOOL_PARAMS.get(task, set()):
+            if key in provider.params:
+                provider.params[key] = _coerce_bool(
+                    provider.params[key],
+                    f"providers.{task}.{key}",
+                    source_path=config.source_path,
+                )
 
 
-def _require_int(value: Any, field: str, *, source_path: str | None, minimum: int) -> None:
+def _coerce_int(value: Any, field: str, *, source_path: str | None, minimum: int) -> int:
     if isinstance(value, bool):
         raise ValueError(
             _config_error(f"{field} must be an integer >= {minimum}, got boolean", source_path)
         )
-    if isinstance(value, float) and not value.is_integer():
-        raise ValueError(
-            _config_error(f"{field} must be an integer >= {minimum}, got {value!r}", source_path)
-        )
     try:
-        number = int(value)
+        if isinstance(value, float):
+            if not math.isfinite(value) or not value.is_integer():
+                raise ValueError
+            number = int(value)
+        elif isinstance(value, str):
+            stripped = value.strip()
+            try:
+                number = int(stripped)
+            except ValueError:
+                as_float = float(stripped)
+                if not math.isfinite(as_float) or not as_float.is_integer():
+                    raise ValueError
+                number = int(as_float)
+        else:
+            number = int(value)
     except (TypeError, ValueError):
         raise ValueError(
             _config_error(f"{field} must be an integer >= {minimum}, got {value!r}", source_path)
         ) from None
     if number < minimum:
         raise ValueError(_config_error(f"{field} must be >= {minimum}, got {value!r}", source_path))
+    return number
 
 
-def _require_float(
+def _coerce_float(
     value: Any,
     field: str,
     *,
@@ -454,7 +537,7 @@ def _require_float(
     minimum: float,
     maximum: float | None = None,
     include_minimum: bool = True,
-) -> None:
+) -> float:
     if isinstance(value, bool):
         raise ValueError(_config_error(f"{field} must be numeric, got boolean", source_path))
     try:
@@ -475,6 +558,21 @@ def _require_float(
         raise ValueError(
             _config_error(f"{field} must be <= {maximum:g}, got {value!r}", source_path)
         )
+    return number
+
+
+def _coerce_bool(value: Any, field: str, *, source_path: str | None) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().casefold()
+        if lowered in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if lowered in {"0", "false", "no", "off", "disabled"}:
+            return False
+    raise ValueError(_config_error(f"{field} must be a boolean, got {value!r}", source_path))
 
 
 def _config_error(message: str, source_path: str | None) -> str:
@@ -570,14 +668,6 @@ def _parse_basic_toml_value(value: str) -> Any:
         return int(value)
     except ValueError:
         return value
-
-
-def _bool_value(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
-    return bool(value)
 
 
 def config_for_context(config: object | None) -> All2TextConfig:

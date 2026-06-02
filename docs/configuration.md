@@ -78,7 +78,9 @@ Current native document parameters:
 
 When a module limit skips content, the output and manifest record the limit, warning, and limitation.
 Numeric parameters are validated. Negative limits, zero where a positive runtime value is required,
-or non-numeric strings fail during config loading with the field name in the error.
+or non-numeric strings fail during config loading with the field name in the error. Integer-like
+strings and integer-valued floats are normalized before runtime use, and ambiguous boolean strings
+such as `"maybe"` are rejected instead of being treated as truthy or falsey by accident.
 
 The manifest includes `module_statuses` for every configured module. A module can be `used`,
 `configured_not_run_no_matching_entries`, or `configured_backend_not_selected_for_matching_entries`,

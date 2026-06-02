@@ -135,9 +135,123 @@ def test_config_rejects_bad_numeric_module_param() -> None:
         )
 
 
+def test_config_normalizes_numeric_and_boolean_values_for_runtime(tmp_path: Path) -> None:
+    config = config_from_dict(
+        {
+            "run": {
+                "max_header_bytes": "8.0",
+                "max_hash_bytes": 1024.0,
+                "max_binary_sample_bytes": "16",
+                "max_archive_members": "2",
+                "use_file_command": "false",
+                "copy_source_stat": "0",
+                "reject_target_inside_source": "yes",
+            },
+            "modules": {
+                "spreadsheet": {
+                    "backend": "document_native_backend",
+                    "include_hidden_sheets": "false",
+                    "max_cells_per_sheet": "3.0",
+                },
+                "video": {
+                    "backend": "media_analysis_backend",
+                    "max_ffprobe_json_chars": "80.0",
+                },
+            },
+            "providers": {
+                "ocr": {
+                    "name": "none",
+                    "enabled": "false",
+                    "min_alnum_ratio": "0.5",
+                    "min_confidence": "35.0",
+                    "auto_invoke": "off",
+                },
+                "video_frames": {
+                    "name": "ffmpeg",
+                    "enabled": "true",
+                    "sample_frames": "yes",
+                    "max_frames": "3.0",
+                    "interval_seconds": "2.5",
+                    "auto_invoke": "false",
+                    "ocr": "0",
+                    "vlm": "1",
+                },
+            },
+        }
+    )
+
+    assert config.options.max_header_bytes == 8
+    assert type(config.options.max_header_bytes) is int
+    assert config.options.use_file_command is False
+    assert config.options.copy_source_stat is False
+    assert config.options.reject_target_inside_source is True
+    assert config.module_params("spreadsheet")["include_hidden_sheets"] is False
+    assert config.module_params("spreadsheet")["max_cells_per_sheet"] == 3
+    assert config.module_params("video")["max_ffprobe_json_chars"] == 80
+    assert config.provider("video_frames").enabled is True
+    assert config.provider("video_frames").get("sample_frames") is True
+    assert config.provider("video_frames").get("max_frames") == 3
+    assert config.provider("video_frames").get("interval_seconds") == 2.5
+    assert config.provider("video_frames").get("auto_invoke") is False
+    assert config.provider("video_frames").get("ocr") is False
+    assert config.provider("video_frames").get("vlm") is True
+    assert config.provider("ocr").get("min_alnum_ratio") == 0.5
+    assert config.provider("ocr").get("min_confidence") == 35.0
+
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    (source / "payload.bin").write_bytes(b"0123456789abcdef")
+
+    manifest = run(source, target, config=config)
+
+    assert manifest["options"]["max_header_bytes"] == 8
+    assert manifest["options"]["use_file_command"] is False
+    assert entry(manifest, "payload.bin")["metadata"]["magic_header"]["bytes_read"] == 8
+
+
+def test_config_rejects_bad_boolean_values() -> None:
+    with pytest.raises(ValueError, match="run.use_file_command must be a boolean"):
+        config_from_dict({"run": {"use_file_command": "sometimes"}})
+    with pytest.raises(ValueError, match="providers.vlm.enabled must be a boolean"):
+        config_from_dict({"providers": {"vlm": {"enabled": "sometimes"}}})
+    with pytest.raises(ValueError, match="providers.vlm.auto_invoke must be a boolean"):
+        config_from_dict({"providers": {"vlm": {"auto_invoke": "sometimes"}}})
+    with pytest.raises(ValueError, match="modules.spreadsheet.include_hidden_sheets must be a boolean"):
+        config_from_dict(
+            {
+                "modules": {
+                    "spreadsheet": {
+                        "backend": "document_native_backend",
+                        "include_hidden_sheets": "sometimes",
+                    }
+                }
+            }
+        )
+
+
+def test_config_rejects_fractional_integer_fields() -> None:
+    with pytest.raises(ValueError, match="run.max_header_bytes must be an integer"):
+        config_from_dict({"run": {"max_header_bytes": 4.5}})
+    with pytest.raises(ValueError, match="providers.video_frames.max_frames must be an integer"):
+        config_from_dict(
+            {
+                "providers": {
+                    "video_frames": {
+                        "name": "ffmpeg",
+                        "enabled": True,
+                        "max_frames": "2.5",
+                    }
+                }
+            }
+        )
+
+
 def test_config_rejects_non_table_sections() -> None:
     with pytest.raises(ValueError, match="config root must be a table"):
         config_from_dict("not-a-table")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run must be a table"):
+        config_from_dict({"run": ""})
     with pytest.raises(ValueError, match="modules must be a table"):
         config_from_dict({"modules": ""})
     with pytest.raises(ValueError, match="providers must be a table"):
