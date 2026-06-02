@@ -98,10 +98,11 @@ specialists. Provider parameters are carried into manifests even when the provid
 unavailable.
 
 Module config can also bound native extraction without swapping code. For example,
-`[modules.document] max_pdf_pages = 50` limits PDF page extraction, while
-`[modules.spreadsheet] max_cells_per_sheet = 10000` and `include_hidden_sheets = false` control
-XLSX output size and hidden-sheet handling. Skips and limits are recorded in warnings, limitations,
-and converter metadata.
+`[modules.document] max_pdf_pages = 100` is the default PDF page cap, while
+`[modules.spreadsheet] max_cells_per_sheet = 20000` and `include_hidden_sheets = false` control
+XLSX output size and hidden-sheet handling. Set these limits to `0` only when an unbounded run is
+intended. Media ffprobe JSON is also capped in output/manifest previews by default. Skips and
+limits are recorded in warnings, limitations, and converter metadata.
 
 ## Current Format Coverage
 

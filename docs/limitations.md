@@ -7,6 +7,9 @@ Current limitations:
 - DOCX, XLSX, PPTX, PDF, ODT, ODS, and ODP extraction depends on optional libraries and parser
   success. When the dependency is absent or parsing fails, all2text emits a safe summary with the
   exact limitation.
+- Native PDF, XLSX, OpenDocument, and media metadata output is bounded by default to avoid surprise
+  output from very large files. Operators can raise the limits, or set document/spreadsheet/media
+  limits to `0` for an unbounded run.
 - PDF extraction is native-text first. Scanned-page rendering/OCR is not automatic unless configured
   providers are added.
 - RTF is preserved as structured source text with lightweight metadata, but rich text layout is not

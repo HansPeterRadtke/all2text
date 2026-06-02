@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from all2text import run
 from all2text.cli import main
-from all2text.config import config_from_dict, load_config
+from all2text.config import config_from_dict, default_config, load_config
 from all2text.detection import classify_path
 from all2text.metadata import collect_metadata
 from all2text.registry import build_default_registry
@@ -92,6 +94,68 @@ auto_invoke = false
     assert config.provider("vlm").get("temperature") == 0.0
 
 
+def test_default_config_has_safe_document_and_spreadsheet_limits() -> None:
+    config = default_config()
+
+    assert config.module_params("document")["max_pdf_pages"] == 100
+    assert config.module_params("document")["max_text_blocks"] == 5000
+    assert config.module_params("spreadsheet")["max_cells_per_sheet"] == 20000
+    assert config.module_params("audio")["max_ffprobe_json_chars"] == 20000
+    assert config.module_params("video")["max_ffprobe_json_chars"] == 20000
+
+
+def test_config_rejects_unknown_backend_name() -> None:
+    with pytest.raises(ValueError, match="unknown backend for modules.image"):
+        config_from_dict({"modules": {"image": "not_a_backend"}})
+
+
+def test_config_rejects_unknown_provider_name() -> None:
+    with pytest.raises(ValueError, match="unknown provider name for providers.vlm"):
+        config_from_dict({"providers": {"vlm": {"name": "not_a_provider", "enabled": True}}})
+
+
+def test_config_rejects_bad_numeric_provider_param() -> None:
+    with pytest.raises(ValueError, match=r"providers.video_frames.max_frames must be >= 1"):
+        config_from_dict(
+            {"providers": {"video_frames": {"name": "ffmpeg", "enabled": True, "max_frames": 0}}}
+        )
+
+
+def test_config_rejects_bad_numeric_module_param() -> None:
+    with pytest.raises(ValueError, match=r"modules.video.max_ffprobe_json_chars must be >= 0"):
+        config_from_dict(
+            {
+                "modules": {
+                    "video": {
+                        "backend": "media_analysis_backend",
+                        "max_ffprobe_json_chars": -1,
+                    }
+                }
+            }
+        )
+
+
+def test_config_rejects_non_table_sections() -> None:
+    with pytest.raises(ValueError, match="config root must be a table"):
+        config_from_dict("not-a-table")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="modules must be a table"):
+        config_from_dict({"modules": ""})
+    with pytest.raises(ValueError, match="providers must be a table"):
+        config_from_dict({"providers": ""})
+
+
+def test_cli_rejects_bad_max_archive_members(tmp_path: Path, capsys) -> None:
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--max-archive-members", "0", str(source), str(target)])
+
+    assert exc.value.code == 2
+    assert "--max-archive-members must be a positive integer" in capsys.readouterr().err
+
+
 def test_configurable_registry_selection_can_route_image_to_fallback(tmp_path: Path) -> None:
     source = tmp_path / "image.png"
     source.write_bytes(PNG_1X1)
@@ -102,3 +166,17 @@ def test_configurable_registry_selection_can_route_image_to_fallback(tmp_path: P
     registry = build_default_registry(config)
 
     assert registry.select(classification, "file").name == "binary_fallback"
+
+
+def test_manifest_module_statuses_show_configured_but_not_run_routes(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    (source / "notes.txt").write_text("plain text\n", encoding="utf-8")
+
+    manifest = run(source, target, options=make_options())
+
+    statuses = manifest["module_statuses"]
+    assert statuses["text"]["status"] == "used"
+    assert statuses["image"]["status"] == "configured_not_run_no_matching_entries"
+    assert statuses["image"]["backend"] == "image_analysis_backend"

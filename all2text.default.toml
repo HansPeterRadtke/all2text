@@ -21,12 +21,8 @@ email = "email_metadata_backend"
 archive = "archive_listing_backend"
 compressed = "archive_listing_backend"
 database = "database_metadata_backend"
-document = "document_native_backend"
-spreadsheet = "document_native_backend"
 presentation = "document_native_backend"
 image = "image_analysis_backend"
-audio = "media_analysis_backend"
-video = "media_analysis_backend"
 scientific_data = "scientific_placeholder_backend"
 geospatial = "text_exact_backend"
 cad_or_technical = "text_exact_backend"
@@ -34,6 +30,24 @@ font = "font_placeholder_backend"
 executable_or_binary = "executable_placeholder_backend"
 disk_image_or_container = "container_placeholder_backend"
 unknown = "binary_fallback"
+
+[modules.document]
+backend = "document_native_backend"
+max_pdf_pages = 100
+max_text_blocks = 5000
+
+[modules.spreadsheet]
+backend = "document_native_backend"
+include_hidden_sheets = true
+max_cells_per_sheet = 20000
+
+[modules.audio]
+backend = "media_analysis_backend"
+max_ffprobe_json_chars = 20000
+
+[modules.video]
+backend = "media_analysis_backend"
+max_ffprobe_json_chars = 20000
 
 [providers.ocr]
 name = "none"

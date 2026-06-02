@@ -13,6 +13,25 @@ from all2text.taxonomy import EXTENSION_HINTS, MIME_HINTS, SOURCE_CODE_EXTENSION
 from all2text.utils import looks_like_text, read_header, stable_unique
 
 
+SPECIALIST_EXTENSION_CATEGORIES = {
+    "archive",
+    "cad_or_technical",
+    "compressed",
+    "database",
+    "disk_image_or_container",
+    "document",
+    "ebook",
+    "email",
+    "executable_or_binary",
+    "font",
+    "geospatial",
+    "notebook",
+    "presentation",
+    "scientific_data",
+    "spreadsheet",
+}
+
+
 def classify_path(
     path: Path,
     *,
@@ -45,6 +64,13 @@ def classify_path(
         evidence.append("layer1_name_hint")
     elif chosen is extension_hint and chosen.rough_category:
         evidence.append("layer1_extension_hint")
+        if _mime_conflicts_with_specialist_extension(extension_hint, mime_hint):
+            evidence.append("layer2_mime_conflict_ignored_for_specialist_extension")
+            warnings.append(
+                "mime_conflicts_with_specialist_extension:"
+                f"{mime_hint.rough_category}/{mime_hint.concrete_format}->"
+                f"{extension_hint.rough_category}/{extension_hint.concrete_format}"
+            )
     else:
         evidence.append("generic_text_content" if rough == "text" else "no_known_signature_or_extension")
 
@@ -231,6 +257,8 @@ def _choose_layer(
 ) -> LayerEvidence:
     if content_signature.rough_category and content_signature.confidence == "strong":
         return content_signature
+    if _mime_conflicts_with_specialist_extension(extension_hint, mime_hint):
+        return extension_hint
     if mime_hint.rough_category and mime_hint.confidence in {"strong", "medium"} and _specific_evidence(mime_hint):
         return mime_hint
     if content_signature.rough_category and _specific_evidence(content_signature):
@@ -252,6 +280,19 @@ def _choose_layer(
             evidence=["metadata_looks_text"],
         )
     return LayerEvidence(source="generic", rough_category="unknown", concrete_format="unknown")
+
+
+def _mime_conflicts_with_specialist_extension(
+    extension_hint: LayerEvidence,
+    mime_hint: LayerEvidence,
+) -> bool:
+    if not extension_hint.rough_category or not mime_hint.rough_category:
+        return False
+    if extension_hint.rough_category not in SPECIALIST_EXTENSION_CATEGORIES:
+        return False
+    if mime_hint.confidence not in {"strong", "medium"}:
+        return False
+    return extension_hint.rough_category != mime_hint.rough_category
 
 
 def _specific_evidence(layer: LayerEvidence) -> bool:

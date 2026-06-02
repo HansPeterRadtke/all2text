@@ -14,7 +14,7 @@ from all2text.planning import create_target_directories, reserve_output_files
 from all2text.providers import provider_statuses
 from all2text.registry import ConversionRegistry, build_default_registry
 from all2text.rendering import planned_output_dict, render_text_output, write_text
-from all2text.reporting import build_summary, manifest_paths, render_report
+from all2text.reporting import build_module_statuses, build_summary, manifest_paths, render_report
 from all2text.scanning import scan_source_tree
 from all2text.utils import is_relative_to, os_info, rel_text, utc_now
 from all2text.version import __version__
@@ -82,6 +82,7 @@ def run(
         "config": config.to_dict(),
         "provider_statuses": [status.to_dict() for status in provider_statuses(config)],
         "registry": {"backends": registry.names(), "preferred_backends": registry.preferred_backends()},
+        "module_statuses": build_module_statuses(config.modules, records, registry.names()),
         "directory_collisions": directory_collisions,
         "planning_warnings": planning_warnings,
         "summary": build_summary(records, entries, directory_collisions, planning_warnings, started),

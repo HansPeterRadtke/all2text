@@ -47,6 +47,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.allow_target_inside_source:
         options = replace(options, reject_target_inside_source=False)
     if args.max_archive_members is not None:
+        if args.max_archive_members <= 0:
+            parser.error("--max-archive-members must be a positive integer")
         options = replace(options, max_archive_members=args.max_archive_members)
     config = config.with_options(options)
     manifest = run(Path(args.source_folder), Path(args.target_folder), options=options, config=config)

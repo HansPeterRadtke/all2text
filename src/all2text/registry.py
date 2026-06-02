@@ -67,24 +67,34 @@ class ConversionRegistry:
 
 def build_default_registry(config: All2TextConfig | None = None) -> ConversionRegistry:
     cfg = config_for_context(config)
+    backends = [
+        FilesystemBackend(),
+        TextBackend(),
+        EmailBackend(),
+        ArchiveBackend(),
+        EbookPlaceholderBackend(),
+        DatabasePlaceholderBackend(),
+        ImagePlaceholderBackend(),
+        MediaPlaceholderBackend(),
+        DocumentPlaceholderBackend(),
+        ScientificPlaceholderBackend(),
+        GeospatialPlaceholderBackend(),
+        CadPlaceholderBackend(),
+        FontPlaceholderBackend(),
+        ExecutablePlaceholderBackend(),
+        ContainerPlaceholderBackend(),
+        BinaryFallbackBackend(),
+    ]
+    registered = {backend.name for backend in backends}
+    unknown = sorted({value.backend for value in cfg.modules.values()} - registered)
+    if unknown:
+        raise ValueError(
+            "unknown configured backend(s): "
+            + ", ".join(unknown)
+            + "; registered backends: "
+            + ", ".join(sorted(registered))
+        )
     return ConversionRegistry(
-        [
-            FilesystemBackend(),
-            TextBackend(),
-            EmailBackend(),
-            ArchiveBackend(),
-            EbookPlaceholderBackend(),
-            DatabasePlaceholderBackend(),
-            ImagePlaceholderBackend(),
-            MediaPlaceholderBackend(),
-            DocumentPlaceholderBackend(),
-            ScientificPlaceholderBackend(),
-            GeospatialPlaceholderBackend(),
-            CadPlaceholderBackend(),
-            FontPlaceholderBackend(),
-            ExecutablePlaceholderBackend(),
-            ContainerPlaceholderBackend(),
-            BinaryFallbackBackend(),
-        ],
+        backends,
         preferred={key: value.backend for key, value in cfg.modules.items()},
     )

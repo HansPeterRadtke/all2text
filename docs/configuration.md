@@ -38,6 +38,9 @@ The registry still verifies that a selected backend can handle the classified en
 selection falls back through the normal ordered registry. This lets text GeoJSON or text CAD stay
 exactly preserved while binary variants fall through to safe placeholders.
 
+Backend names are validated when the config is loaded. A typo such as
+`image = "image_analysis_backned"` raises a `ValueError` instead of silently using another backend.
+
 Module tables can also carry human-readable parameters. Family keys such as `document` or
 `spreadsheet` apply broadly, and concrete-format keys such as `pdf` or `xlsx` can override or add
 format-specific knobs:
@@ -45,27 +48,41 @@ format-specific knobs:
 ```toml
 [modules.document]
 backend = "document_native_backend"
-max_pdf_pages = 50
-max_text_blocks = 2000
+max_pdf_pages = 100
+max_text_blocks = 5000
 
 [modules.spreadsheet]
 backend = "document_native_backend"
 include_hidden_sheets = true
-max_cells_per_sheet = 10000
+max_cells_per_sheet = 20000
 
 [modules.xlsx]
 backend = "document_native_backend"
 max_cells_per_sheet = 25000
+
+[modules.video]
+backend = "media_analysis_backend"
+max_ffprobe_json_chars = 20000
 ```
 
 Current native document parameters:
 
-- `document.max_pdf_pages`: limits PDF page text extraction; omitted or `0` means all pages.
-- `document.max_text_blocks`: limits OpenDocument text block output; omitted or `0` means all blocks.
+- `document.max_pdf_pages`: limits PDF page text extraction; default is `100`, and `0` means all pages.
+- `document.max_text_blocks`: limits OpenDocument text block output; default is `5000`, and `0`
+  means all blocks.
 - `spreadsheet.include_hidden_sheets`: defaults to `true`; set `false` to list but not extract hidden sheets.
-- `spreadsheet.max_cells_per_sheet`: bounds non-empty XLSX cells emitted per worksheet.
+- `spreadsheet.max_cells_per_sheet`: bounds non-empty XLSX cells emitted per worksheet; default is
+  `20000`, and `0` means no per-sheet cell cap.
+- `audio.max_ffprobe_json_chars` and `video.max_ffprobe_json_chars`: bound ffprobe JSON emitted in
+  outputs and manifests; default is `20000`, and `0` means no ffprobe JSON cap.
 
 When a module limit skips content, the output and manifest record the limit, warning, and limitation.
+Numeric parameters are validated. Negative limits, zero where a positive runtime value is required,
+or non-numeric strings fail during config loading with the field name in the error.
+
+The manifest includes `module_statuses` for every configured module. A module can be `used`,
+`configured_not_run_no_matching_entries`, or `configured_backend_not_selected_for_matching_entries`,
+which makes it clear when a route was configured but no source entry exercised it.
 
 ## Provider Settings
 
@@ -97,6 +114,7 @@ auto_invoke = false
 
 `auto_invoke = false` records the provider configuration and route without making a model request.
 Set it to `true` only when the endpoint is running and you want the backend to call it.
+Provider task names, provider names, and numeric runtime settings are validated at config load time.
 
 Current core provider behavior:
 

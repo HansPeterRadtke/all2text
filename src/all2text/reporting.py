@@ -51,6 +51,45 @@ def build_summary(
     }
 
 
+def build_module_statuses(
+    modules: dict[str, Any],
+    records: list[dict[str, Any]],
+    registered_backends: list[str],
+) -> dict[str, Any]:
+    registered = set(registered_backends)
+    statuses: dict[str, Any] = {}
+    for key, module in sorted(modules.items()):
+        backend = getattr(module, "backend", "")
+        matched = [record for record in records if _record_matches_module_key(record, key)]
+        selected_count = sum(1 for record in matched if record.get("converter_used") == backend)
+        if backend not in registered:
+            status = "configured_backend_not_registered"
+        elif selected_count:
+            status = "used"
+        elif matched:
+            status = "configured_backend_not_selected_for_matching_entries"
+        else:
+            status = "configured_not_run_no_matching_entries"
+        statuses[key] = {
+            "backend": backend,
+            "registered": backend in registered,
+            "matching_entry_count": len(matched),
+            "selected_count": selected_count,
+            "status": status,
+            "params": dict(getattr(module, "params", {}) or {}),
+        }
+    return statuses
+
+
+def _record_matches_module_key(record: dict[str, Any], key: str) -> bool:
+    classification = record.get("classification") or {}
+    rough = str(classification.get("rough_category") or "")
+    fmt = str(classification.get("concrete_format") or "").casefold()
+    entry_type = str(record.get("entry_type") or "")
+    lowered = key.casefold()
+    return lowered in {rough.casefold(), fmt, entry_type.casefold()}
+
+
 def render_report(manifest: dict[str, Any]) -> str:
     summary = manifest["summary"]
     lines = [
@@ -78,6 +117,14 @@ def render_report(manifest: dict[str, Any]) -> str:
     lines.append("")
     lines.append("Converter counts:")
     lines.extend(f"- {key}: {value}" for key, value in sorted(summary["converter_counts"].items()))
+    if manifest.get("module_statuses"):
+        lines.extend(["", "Module statuses:"])
+        for key, status in sorted(manifest["module_statuses"].items()):
+            lines.append(
+                f"- {key}: {status.get('status')} "
+                f"(backend={status.get('backend')}, matches={status.get('matching_entry_count')}, "
+                f"selected={status.get('selected_count')})"
+            )
     if summary["files_with_errors"]:
         lines.extend(["", "Files with errors:", *[f"- {item}" for item in summary["files_with_errors"]]])
     if summary["files_with_warnings"]:
@@ -91,4 +138,3 @@ def render_report(manifest: dict[str, Any]) -> str:
 
 def manifest_paths(target_root: Path) -> tuple[Path, Path]:
     return target_root / "_conversion_manifest.json", target_root / "_conversion_report.txt"
-

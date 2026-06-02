@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from all2text import run
+from all2text.backends.media import limit_ffprobe_metadata
 from all2text.cli import main
 from all2text.config import config_from_dict
 from tests.conftest import PNG_1X1, entry, make_options
@@ -292,6 +293,53 @@ def test_video_frame_provider_plan_is_recorded_without_running_ffmpeg(tmp_path: 
     assert stages["frame_sampling"]["output_format"] == "jpg"
     assert stages["frame_ocr"]["planned"] is True
     assert stages["frame_vlm"]["planned"] is True
+
+
+def test_ffprobe_metadata_preview_is_bounded_for_manifest_safety() -> None:
+    metadata = {"streams": [{"codec_type": "video", "long_tag": "x" * 200}]}
+
+    limited, truncated = limit_ffprobe_metadata(metadata, max_chars=80)
+
+    assert truncated is True
+    assert limited is not None
+    assert limited["truncated"] is True
+    assert limited["max_chars"] == 80
+    assert len(str(limited["json_preview"])) == 80
+    assert limited["original_json_chars"] > 80
+    assert limit_ffprobe_metadata(metadata, max_chars=0) == (metadata, False)
+
+
+def test_media_ffprobe_limit_records_warning_without_running_real_ffprobe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    (source / "clip.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42")
+
+    def fake_ffprobe(path: Path) -> tuple[dict[str, object], list[str]]:
+        return ({"streams": [{"codec_type": "video", "long_tag": "x" * 200}]}, [])
+
+    monkeypatch.setattr("all2text.backends.media.ffprobe", fake_ffprobe)
+    config = config_from_dict(
+        {
+            "modules": {
+                "video": {
+                    "backend": "media_analysis_backend",
+                    "max_ffprobe_json_chars": 80,
+                }
+            }
+        }
+    )
+
+    manifest = run(source, target, options=make_options(), config=config)
+
+    record = entry(manifest, "clip.mp4")
+    assert record["converter_metadata"]["ffprobe_truncated"] is True
+    assert record["converter_metadata"]["ffprobe"]["max_chars"] == 80
+    assert any("ffprobe_metadata_truncated" in warning for warning in record["warnings"])
+    assert any("ffprobe JSON metadata was truncated" in item for item in record["limitations"])
 
 
 def test_legacy_xls_truthful_fallback_when_xlrd_absent(tmp_path: Path) -> None:

@@ -28,18 +28,29 @@ class MediaAnalysisBackend:
         cfg = config_for_context(ctx.config)
         ffprobe_metadata, warnings = ffprobe(path)
         family = classification.rough_category
+        params = cfg.module_params(family, classification.concrete_format.casefold())
+        max_ffprobe_json_chars = positive_int_or_zero(params.get("max_ffprobe_json_chars"))
         statuses = provider_statuses(cfg, family=family)
         profile = media_profile(classification, ffprobe_metadata)
         stages = media_stages(classification, profile, statuses, cfg)
+        ffprobe_output_metadata, ffprobe_truncated = limit_ffprobe_metadata(
+            ffprobe_metadata,
+            max_chars=max_ffprobe_json_chars,
+        )
+        limitations: list[str] = []
+        if ffprobe_truncated:
+            warnings.append(f"ffprobe_metadata_truncated:max_chars={max_ffprobe_json_chars}")
+            limitations.append("ffprobe JSON metadata was truncated by media.max_ffprobe_json_chars.")
         limitation = (
             "Media conversion is layered metadata/provider reporting in the core package. "
             "Speech transcription, translation, frame OCR, scene analysis, and VLM understanding "
             "require configured providers."
         )
+        limitations.insert(0, limitation)
         text = render_media_text(
             classification,
             limitation,
-            ffprobe_metadata,
+            ffprobe_output_metadata,
             profile,
             stages,
             [status.to_dict() for status in statuses],
@@ -53,12 +64,14 @@ class MediaAnalysisBackend:
             extraction_methods_used=methods,
             warnings=warnings,
             metadata={
-                "ffprobe": ffprobe_metadata or None,
+                "ffprobe": ffprobe_output_metadata or None,
+                "ffprobe_truncated": ffprobe_truncated,
+                "max_ffprobe_json_chars": max_ffprobe_json_chars,
                 "profile": profile,
                 "stages": stages,
                 "provider_statuses": [status.to_dict() for status in statuses],
             },
-            limitations=[limitation],
+            limitations=limitations,
         )
 
 
@@ -327,6 +340,37 @@ def positive_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if number > 0 else None
+
+
+def positive_int_or_zero(value: Any) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
+
+
+def limit_ffprobe_metadata(
+    metadata: dict[str, object] | None,
+    *,
+    max_chars: int | None,
+) -> tuple[dict[str, object] | None, bool]:
+    if metadata is None:
+        return None, False
+    if max_chars is None or max_chars == 0:
+        return metadata, False
+    encoded = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+    if len(encoded) <= max_chars:
+        return metadata, False
+    return (
+        {
+            "truncated": True,
+            "max_chars": max_chars,
+            "json_preview": encoded[:max_chars],
+            "original_json_chars": len(encoded),
+        },
+        True,
+    )
 
 
 def render_media_text(

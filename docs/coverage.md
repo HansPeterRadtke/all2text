@@ -48,6 +48,12 @@ Generic printable text is not allowed to erase more specific extension or name e
 example, a small Markdown or YAML file that only looks like generic text is still classified as its
 structured format, while a strong binary magic signature still wins over a misleading extension.
 
+Known specialist extensions such as DWG, DXF, STL, FITS, HDF5, SQLite, fonts, disk images, and
+OpenDocument/Office formats are not displaced by generic conflicting MIME metadata. This matters on
+systems where `file(1)` or Python MIME tables report vendor CAD or scientific formats under an
+image-like MIME. Actual strong content signatures, such as a PNG magic header in a misnamed file,
+still override the extension.
+
 ## Placeholder Truthfulness
 
 Placeholder and provider-route outputs are intentionally explicit. Images state whether OCR, VLM,
@@ -60,3 +66,5 @@ semantic extraction beyond what the backend actually performed.
 The top-level manifest also records provider statuses for configured OCR, VLM/local llama.cpp,
 chart, document-intelligence, speech, and video-frame routes. This makes a run auditable even when
 no file happened to exercise a provider family.
+It also records module statuses so configured extraction routes that had no matching files, or were
+not selected for matching files, are explicit.
