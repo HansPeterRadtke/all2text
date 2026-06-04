@@ -4,11 +4,15 @@
 #   all2text --config /path/to/all2text.toml /path/to/source /path/to/output
 
 [run]
+profile = "pip"
 max_header_bytes = 4096
 max_hash_bytes = 268435456
 max_binary_sample_bytes = 1048576
 max_archive_members = 5000
-use_file_command = true
+use_file_command = false
+allow_optional_python = true
+allow_external_tools = false
+allow_local_models = false
 copy_source_stat = true
 reject_target_inside_source = true
 

@@ -36,6 +36,13 @@ class DocumentBackend:
         ctx: ConversionContext,
     ) -> ConversionResult:
         fmt = classification.concrete_format.upper()
+        if fmt in {"DOCX", "XLSX", "PPTX", "PDF", "XLS"} and not ctx.options.allow_optional_python:
+            return document_fallback(
+                path,
+                classification,
+                ctx,
+                dependency_error=f"optional_python_disabled_by_profile:{ctx.options.profile}",
+            )
         if fmt == "DOCX":
             return convert_docx(path, rel_path, classification, ctx)
         if fmt == "XLSX":

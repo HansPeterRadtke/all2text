@@ -22,14 +22,15 @@ extracts.
 | EPUB | `.epub` | Lists package members and container XML preview; no chapter extraction claim. |
 | Email | `.eml`, `.mbox` text messages | Parses headers/plain text body, lists attachment metadata, and preserves original message source. |
 | SQLite | `.sqlite`, `.sqlite3`, `.db` with SQLite header | Opens read-only and lists schema objects when possible. |
+| Media metadata | Audio/video with `mutagen` installed | In the default `pip` profile, records Python-only container/tag metadata where mutagen can read it. |
 
 ## Safe Placeholder Coverage
 
 | Category | Examples | Core behavior |
 | --- | --- | --- |
 | Image | PNG, JPEG, GIF, TIFF, BMP, WebP, HEIC, SVG | Records dimensions/profile, route plan, provider status, OCR/VLM/chart/document hooks, and SVG markup when textual. No specialist success is claimed unless a configured provider returns content. |
-| Audio | WAV, MP3, FLAC, OGG, AAC, MIDI | Records media profile, optional `ffprobe`, speech/language/transcription/translation provider stages, and truthful blockers. |
-| Video | MP4, MOV, MKV, AVI, WebM | Records media profile, optional `ffprobe`, subtitles count, configured frame sampling/OCR/VLM stage plans, audio transcription hooks, and truthful blockers. |
+| Audio | WAV, MP3, FLAC, OGG, AAC, MIDI | Records media profile, optional Python `mutagen` metadata, optional `ffprobe` only in `tools`/`full`, speech/language/transcription/translation provider stages, and truthful blockers. |
+| Video | MP4, MOV, MKV, AVI, WebM | Records media profile, optional Python `mutagen` metadata, optional `ffprobe` only in `tools`/`full`, subtitles count, configured frame sampling/OCR/VLM stage plans, audio transcription hooks, and truthful blockers. |
 | Documents without native parser | DOC, malformed office/PDF files, XLS without `xlrd` | Safe summary with dependency/parser warning. |
 | Scientific data | HDF5, NetCDF, Parquet, FITS, MAT, NPY/NPZ | Safe byte/string summary. No dataset traversal in core. |
 | Binary geospatial | Shapefile, GeoPackage, raster/sidecar geospatial formats | Safe byte/string summary. No GDAL/Fiona/Rasterio inspection in core. |
@@ -63,8 +64,8 @@ without inventing transcripts or scene labels. Advanced ebook, database, geospat
 scientific, font, executable, and disk-image formats all produce useful metadata without claiming
 semantic extraction beyond what the backend actually performed.
 
-The top-level manifest also records provider statuses for configured OCR, VLM/local llama.cpp,
-chart, document-intelligence, speech, and video-frame routes. This makes a run auditable even when
-no file happened to exercise a provider family.
-It also records module statuses so configured extraction routes that had no matching files, or were
-not selected for matching files, are explicit.
+The top-level manifest also records capability and provider statuses for configured OCR, VLM/local
+llama.cpp, chart, document-intelligence, speech, shell-tool, Python-library, and video-frame routes.
+This makes a run auditable even when no file happened to exercise a provider family. It also records
+module statuses so configured extraction routes that had no matching files, or were not selected for
+matching files, are explicit.

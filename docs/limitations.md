@@ -17,8 +17,10 @@ Current limitations:
 - Images include metadata/profile/provider-route reports. OCR, captions, chart tables, document
   understanding, and visual scene analysis require explicit provider configuration and are only
   marked used when providers return content.
-- Audio and video are not transcribed by default; `ffprobe` metadata is used only when available,
-  and speech/frame stages remain provider hooks unless configured adapters are added.
+- Audio and video are not transcribed by default. Python-only media metadata is used when optional
+  packages such as `mutagen` are installed. `ffprobe` metadata is used only in the `tools`/`full`
+  profiles when the executable is available, and speech/frame stages remain provider hooks unless
+  configured adapters are added.
 - Binary geospatial files are not inspected for coordinate reference systems, layers, features, or
   raster bands in core.
 - Scientific data files are not traversed for datasets or arrays in core.
@@ -31,8 +33,9 @@ Current limitations:
 - Formula cached values in XLSX are reported when available in the file. all2text does not evaluate
   formulas. Rendered spreadsheet charts and embedded document-image OCR/VLM analysis require
   optional providers.
-- Local LLM/VLM/OCR models are not bundled with the repository. Model files must stay external and
-  be supplied by the operator.
+- Local LLM/VLM/OCR models are not bundled with the repository. Model files and llama.cpp servers
+  must stay external and be supplied by the operator. The default `pip` profile reports model
+  providers as disabled by profile and never calls them.
 
 These limitations are also emitted in per-file conversion metadata so downstream systems can tell
 the difference between extracted text and safe summaries.
@@ -46,6 +49,7 @@ The default package avoids operations that can surprise an operator during a bul
 - no disk image mounting;
 - no executable execution;
 - no network calls;
+- no external shell-tool execution;
 - no automatic model downloads;
 - no mutation of source files.
 

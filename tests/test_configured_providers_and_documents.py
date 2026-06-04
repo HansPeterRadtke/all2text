@@ -8,7 +8,7 @@ import pytest
 from all2text import run
 from all2text.backends.media import limit_ffprobe_metadata
 from all2text.cli import main
-from all2text.config import config_from_dict
+from all2text.config import config_from_dict, options_with_profile
 from tests.conftest import PNG_1X1, entry, make_options
 
 
@@ -47,7 +47,7 @@ def test_image_provider_configuration_records_vlm_without_requiring_server(tmp_p
         }
     )
 
-    manifest = run(source, target, options=make_options(), config=config)
+    manifest = run(source, target, options=options_with_profile(make_options(), "local-models"), config=config)
 
     record = entry(manifest, "chart_like.png")
     assert record["converter_used"] == "image_analysis_backend"
@@ -83,7 +83,7 @@ def test_manifest_records_global_provider_statuses_without_matching_files(tmp_pa
         }
     )
 
-    manifest = run(source, target, options=make_options(), config=config)
+    manifest = run(source, target, options=options_with_profile(make_options(), "full"), config=config)
 
     statuses = {status["name"]: status for status in manifest["provider_statuses"]}
     assert statuses["vlm"]["enabled"] is True
@@ -282,7 +282,7 @@ def test_video_frame_provider_plan_is_recorded_without_running_ffmpeg(tmp_path: 
         }
     )
 
-    manifest = run(source, target, options=make_options(), config=config)
+    manifest = run(source, target, options=options_with_profile(make_options(), "tools"), config=config)
 
     record = entry(manifest, "clip.mp4")
     stages = record["converter_metadata"]["stages"]
@@ -333,7 +333,7 @@ def test_media_ffprobe_limit_records_warning_without_running_real_ffprobe(
         }
     )
 
-    manifest = run(source, target, options=make_options(), config=config)
+    manifest = run(source, target, options=options_with_profile(make_options(), "tools"), config=config)
 
     record = entry(manifest, "clip.mp4")
     assert record["converter_metadata"]["ffprobe_truncated"] is True

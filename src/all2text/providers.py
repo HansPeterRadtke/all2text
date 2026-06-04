@@ -10,7 +10,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from all2text.config import ProviderConfig, config_for_context
+from all2text.config import ProviderConfig, config_for_context, effective_provider
 
 
 @dataclass(frozen=True)
@@ -45,23 +45,57 @@ def provider_statuses(config: object | None, *, family: str | None = None) -> li
     if family in {None, "image", "document", "chart", "video"}:
         statuses.extend(
             [
-                ocr_status(cfg.provider("ocr")),
-                vlm_status(cfg.provider("vlm")),
+                ocr_status(
+                    effective_provider(cfg, "ocr"),
+                    configured=cfg.provider("ocr"),
+                    profile=cfg.options.profile,
+                ),
+                vlm_status(
+                    effective_provider(cfg, "vlm"),
+                    configured=cfg.provider("vlm"),
+                    profile=cfg.options.profile,
+                ),
             ]
         )
     if family in {None, "image", "document", "chart"}:
         statuses.extend(
             [
-                chart_status(cfg.provider("chart")),
-                document_intelligence_status(cfg.provider("document_intelligence")),
+                chart_status(
+                    effective_provider(cfg, "chart"),
+                    configured=cfg.provider("chart"),
+                    profile=cfg.options.profile,
+                ),
+                document_intelligence_status(
+                    effective_provider(cfg, "document_intelligence"),
+                    configured=cfg.provider("document_intelligence"),
+                    profile=cfg.options.profile,
+                ),
             ]
         )
     if family in {None, "audio", "video"}:
-        statuses.append(speech_status(cfg.provider("speech")))
+        statuses.append(
+            speech_status(
+                effective_provider(cfg, "speech"),
+                configured=cfg.provider("speech"),
+                profile=cfg.options.profile,
+            )
+        )
     if family in {None, "video"}:
-        statuses.append(video_frame_status(cfg.provider("video_frames")))
+        statuses.append(
+            video_frame_status(
+                effective_provider(cfg, "video_frames"),
+                configured=cfg.provider("video_frames"),
+                profile=cfg.options.profile,
+            )
+        )
     if family in {None, "text"}:
-        statuses.append(llm_text_status(cfg.provider("llm_text")))
+        statuses.append(
+            llm_text_status(
+                effective_provider(cfg, "llm_text"),
+                configured=cfg.provider("llm_text"),
+                profile=cfg.options.profile,
+            )
+        )
     return statuses
 
 
@@ -129,12 +163,14 @@ def image_family(image_profile: dict[str, Any], *, chart_candidate: bool) -> str
     return "scene_or_photo"
 
 
-def ocr_status(provider: ProviderConfig) -> ProviderStatus:
+def ocr_status(provider: ProviderConfig, *, configured: ProviderConfig, profile: str) -> ProviderStatus:
     executable = shutil.which("tesseract") if provider.name == "tesseract" else None
     enabled = provider.enabled and provider.name != "none"
     error = None
     available = False
-    if not enabled:
+    if provider.get("disabled_by_profile"):
+        error = f"OCR disabled by profile:{profile}"
+    elif not enabled:
         error = "OCR disabled by config"
     elif provider.name == "tesseract":
         available = bool(executable)
@@ -150,26 +186,36 @@ def ocr_status(provider: ProviderConfig) -> ProviderStatus:
         error=error,
         details={
             "provider": provider.name,
+            "configured_enabled": configured.enabled,
+            "effective_enabled": enabled,
+            "profile": profile,
             "language": provider.get("language", "eng"),
             "auto_invoke": bool(provider.get("auto_invoke", False)),
         },
     )
 
 
-def vlm_status(provider: ProviderConfig) -> ProviderStatus:
+def vlm_status(provider: ProviderConfig, *, configured: ProviderConfig, profile: str) -> ProviderStatus:
     enabled = provider.enabled and provider.name != "none"
     base_url = str(provider.get("base_url", "") or "").rstrip("/")
     model = str(provider.get("model", "") or "")
     error = None
     available = False
-    if not enabled:
+    endpoint_probe: dict[str, Any] | None = None
+    if provider.get("disabled_by_profile"):
+        error = f"VLM disabled by profile:{profile}"
+    elif not enabled:
         error = "VLM disabled by config"
     elif provider.name != "openai_compatible":
         error = f"VLM provider is not implemented in all2text core: {provider.name}"
     elif not base_url or not model:
         error = "openai-compatible VLM requires base_url and model"
+    elif not bool(provider.get("auto_invoke", False)):
+        error = "openai-compatible VLM configured but auto_invoke=false; endpoint not probed"
     else:
-        available = True
+        endpoint_probe = probe_openai_compatible_endpoint(base_url, model)
+        available = bool(endpoint_probe.get("reachable"))
+        error = None if available else str(endpoint_probe.get("error") or "openai-compatible VLM endpoint unreachable")
     return ProviderStatus(
         name="vlm",
         kind="vision_language_model",
@@ -179,17 +225,25 @@ def vlm_status(provider: ProviderConfig) -> ProviderStatus:
         error=error,
         details={
             "provider": provider.name,
+            "configured_enabled": configured.enabled,
+            "effective_enabled": enabled,
+            "profile": profile,
             "model": model or None,
             "auto_invoke": bool(provider.get("auto_invoke", False)),
+            "endpoint_probe": endpoint_probe,
         },
     )
 
 
-def llm_text_status(provider: ProviderConfig) -> ProviderStatus:
+def llm_text_status(provider: ProviderConfig, *, configured: ProviderConfig, profile: str) -> ProviderStatus:
     enabled = provider.enabled and provider.name != "none"
     base_url = str(provider.get("base_url", "") or "").rstrip("/")
     model = str(provider.get("model", "") or "")
-    if not enabled:
+    endpoint_probe: dict[str, Any] | None = None
+    if provider.get("disabled_by_profile"):
+        error = f"text LLM disabled by profile:{profile}"
+        available = False
+    elif not enabled:
         error = "text LLM disabled by config"
         available = False
     elif provider.name != "openai_compatible":
@@ -198,9 +252,13 @@ def llm_text_status(provider: ProviderConfig) -> ProviderStatus:
     elif not base_url or not model:
         error = "openai-compatible text LLM requires base_url and model"
         available = False
+    elif not bool(provider.get("auto_invoke", False)):
+        error = "openai-compatible text LLM configured but auto_invoke=false; endpoint not probed"
+        available = False
     else:
-        error = None
-        available = True
+        endpoint_probe = probe_openai_compatible_endpoint(base_url, model)
+        available = bool(endpoint_probe.get("reachable"))
+        error = None if available else str(endpoint_probe.get("error") or "openai-compatible text LLM endpoint unreachable")
     return ProviderStatus(
         name="llm_text",
         kind="text_language_model",
@@ -208,16 +266,26 @@ def llm_text_status(provider: ProviderConfig) -> ProviderStatus:
         available=available,
         source=base_url or None,
         error=error,
-        details={"provider": provider.name, "model": model or None},
+        details={
+            "provider": provider.name,
+            "configured_enabled": configured.enabled,
+            "effective_enabled": enabled,
+            "profile": profile,
+            "model": model or None,
+            "auto_invoke": bool(provider.get("auto_invoke", False)),
+            "endpoint_probe": endpoint_probe,
+        },
     )
 
 
-def chart_status(provider: ProviderConfig) -> ProviderStatus:
+def chart_status(provider: ProviderConfig, *, configured: ProviderConfig, profile: str) -> ProviderStatus:
     enabled = provider.enabled and provider.name != "none"
     model_path = str(provider.get("model_path", "") or "")
     error = None
     available = False
-    if not enabled:
+    if provider.get("disabled_by_profile"):
+        error = f"chart specialist disabled by profile:{profile}"
+    elif not enabled:
         error = "chart specialist disabled by config"
     elif provider.name in {"deplot", "chartgemma", "unichart"}:
         path = Path(model_path)
@@ -235,30 +303,47 @@ def chart_status(provider: ProviderConfig) -> ProviderStatus:
         available=available,
         source=model_path or None,
         error=error,
-        details={"provider": provider.name, "embedded_images_enabled": bool(provider.get("embedded_images_enabled", False))},
+        details={
+            "provider": provider.name,
+            "configured_enabled": configured.enabled,
+            "effective_enabled": enabled,
+            "profile": profile,
+            "embedded_images_enabled": bool(provider.get("embedded_images_enabled", False)),
+        },
     )
 
 
-def document_intelligence_status(provider: ProviderConfig) -> ProviderStatus:
+def document_intelligence_status(provider: ProviderConfig, *, configured: ProviderConfig, profile: str) -> ProviderStatus:
     enabled = provider.enabled and provider.name != "none"
+    if provider.get("disabled_by_profile"):
+        error = f"document intelligence provider disabled by profile:{profile}"
+    elif not enabled:
+        error = "document intelligence provider disabled by config"
+    else:
+        error = f"document intelligence provider is not implemented in all2text core: {provider.name}"
     return ProviderStatus(
         name="document_intelligence",
         kind="document_intelligence",
         enabled=enabled,
         available=False,
         source=str(provider.get("endpoint", "") or "") or None,
-        error="document intelligence provider disabled by config"
-        if not enabled
-        else f"document intelligence provider is not implemented in all2text core: {provider.name}",
-        details={"provider": provider.name},
+        error=error,
+        details={
+            "provider": provider.name,
+            "configured_enabled": configured.enabled,
+            "effective_enabled": enabled,
+            "profile": profile,
+        },
     )
 
 
-def speech_status(provider: ProviderConfig) -> ProviderStatus:
+def speech_status(provider: ProviderConfig, *, configured: ProviderConfig, profile: str) -> ProviderStatus:
     enabled = provider.enabled and provider.name != "none"
     available = False
     error = None
-    if not enabled:
+    if provider.get("disabled_by_profile"):
+        error = f"speech provider disabled by profile:{profile}"
+    elif not enabled:
         error = "speech provider disabled by config"
     elif provider.name in {"whisper", "faster_whisper", "vosk"}:
         module_name = "faster_whisper" if provider.name == "faster_whisper" else provider.name
@@ -278,6 +363,9 @@ def speech_status(provider: ProviderConfig) -> ProviderStatus:
         error=error,
         details={
             "provider": provider.name,
+            "configured_enabled": configured.enabled,
+            "effective_enabled": enabled,
+            "profile": profile,
             "transcribe": bool(provider.get("transcribe", False)),
             "translate": bool(provider.get("translate", False)),
             "language_detection": bool(provider.get("language_detection", False)),
@@ -285,12 +373,14 @@ def speech_status(provider: ProviderConfig) -> ProviderStatus:
     )
 
 
-def video_frame_status(provider: ProviderConfig) -> ProviderStatus:
+def video_frame_status(provider: ProviderConfig, *, configured: ProviderConfig, profile: str) -> ProviderStatus:
     enabled = provider.enabled and provider.name != "none"
     ffmpeg = shutil.which("ffmpeg")
     error = None
     available = False
-    if not enabled:
+    if provider.get("disabled_by_profile"):
+        error = f"video frame provider disabled by profile:{profile}"
+    elif not enabled:
         error = "video frame provider disabled by config"
     elif provider.name == "ffmpeg":
         available = bool(ffmpeg)
@@ -306,11 +396,39 @@ def video_frame_status(provider: ProviderConfig) -> ProviderStatus:
         error=error,
         details={
             "provider": provider.name,
+            "configured_enabled": configured.enabled,
+            "effective_enabled": enabled,
+            "profile": profile,
             "sample_frames": bool(provider.get("sample_frames", False)),
             "ocr": bool(provider.get("ocr", False)),
             "vlm": bool(provider.get("vlm", False)),
         },
     )
+
+
+def probe_openai_compatible_endpoint(base_url: str, model: str) -> dict[str, Any]:
+    url = f"{base_url.rstrip('/')}/models"
+    request = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=1.0) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        return {"reachable": False, "url": url, "model": model, "error": str(exc)}
+    models = data.get("data") or data.get("models") or []
+    model_names: list[str] = []
+    if isinstance(models, list):
+        for item in models:
+            if isinstance(item, dict):
+                value = item.get("id") or item.get("model") or item.get("name")
+                if value:
+                    model_names.append(str(value))
+    return {
+        "reachable": True,
+        "url": url,
+        "model": model,
+        "model_list_contains_configured_model": model in model_names if model_names else None,
+        "model_names": model_names[:20],
+    }
 
 
 def call_openai_compatible_vision(
@@ -324,7 +442,11 @@ def call_openai_compatible_vision(
     base_url = str(provider.get("base_url", "") or "").rstrip("/")
     model = str(provider.get("model", "") or "")
     if not provider.enabled or provider.name != "openai_compatible":
-        return None, ["vlm_call_skipped_provider_disabled"], {}
+        return None, ["vlm_call_skipped_provider_disabled"], {
+            "base_url": base_url,
+            "model": model,
+            "disabled_by_profile": provider.get("disabled_by_profile"),
+        }
     if not bool(provider.get("auto_invoke", False)):
         return None, ["vlm_call_skipped_auto_invoke_false"], {"base_url": base_url, "model": model}
     if not base_url or not model:

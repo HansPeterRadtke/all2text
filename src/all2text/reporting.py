@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from all2text.models import TreeEntry
+from all2text.models import RunOptions, TreeEntry
 
 
 def build_summary(
@@ -13,6 +13,9 @@ def build_summary(
     directory_collisions: list[dict[str, Any]],
     planning_warnings: list[dict[str, Any]],
     started: float,
+    *,
+    options: RunOptions | None = None,
+    capabilities: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     text_records = [record for record in records if record.get("entry_type") != "directory"]
     category_counts: dict[str, int] = {}
@@ -30,8 +33,13 @@ def build_summary(
         for limitation in record.get("limitations") or []:
             key = str(limitation)
             limitation_counts[key] = limitation_counts.get(key, 0) + 1
-    return {
+    capability_summary = (capabilities or {}).get("summary", {})
+    summary = {
         "scan_first": True,
+        "profile": options.profile if options else capability_summary.get("profile"),
+        "allow_optional_python": options.allow_optional_python if options else None,
+        "allow_external_tools": options.allow_external_tools if options else None,
+        "allow_local_models": options.allow_local_models if options else None,
         "source_entry_count": len(entries),
         "directory_count": sum(1 for entry in entries if entry.entry_type == "directory"),
         "converted_text_file_count": len(text_records),
@@ -49,6 +57,9 @@ def build_summary(
         "output_collision_count": len(planning_warnings),
         "runtime_seconds": round(time.monotonic() - started, 3),
     }
+    if capability_summary:
+        summary["capability_summary"] = capability_summary
+    return summary
 
 
 def build_module_statuses(
@@ -100,6 +111,10 @@ def render_report(manifest: dict[str, Any]) -> str:
         f"Created UTC: {manifest['created_utc']}",
         "",
         "Summary:",
+        f"- profile: {summary.get('profile')}",
+        f"- allow_optional_python: {summary.get('allow_optional_python')}",
+        f"- allow_external_tools: {summary.get('allow_external_tools')}",
+        f"- allow_local_models: {summary.get('allow_local_models')}",
         f"- scan_first: {summary['scan_first']}",
         f"- source_entry_count: {summary['source_entry_count']}",
         f"- directory_count: {summary['directory_count']}",
@@ -117,6 +132,30 @@ def render_report(manifest: dict[str, Any]) -> str:
     lines.append("")
     lines.append("Converter counts:")
     lines.extend(f"- {key}: {value}" for key, value in sorted(summary["converter_counts"].items()))
+    if manifest.get("capabilities"):
+        cap_summary = manifest["capabilities"].get("summary", {})
+        lines.extend(["", "Capability summary:"])
+        for key in (
+            "available_optional_python_libraries",
+            "missing_optional_python_libraries",
+            "available_external_tools",
+            "missing_external_tools",
+            "disabled_by_profile",
+        ):
+            lines.append(f"- {key}: {cap_summary.get(key, [])}")
+        lines.extend(["", "External tools:"])
+        for item in manifest["capabilities"].get("external_tools", []):
+            lines.append(
+                f"- {item.get('name')}: enabled={item.get('enabled')} "
+                f"available={item.get('available')} error={item.get('error')}"
+            )
+    if manifest.get("provider_statuses"):
+        lines.extend(["", "Provider statuses:"])
+        for status in manifest["provider_statuses"]:
+            lines.append(
+                f"- {status.get('name')}: enabled={status.get('enabled')} "
+                f"available={status.get('available')} error={status.get('error')}"
+            )
     if manifest.get("module_statuses"):
         lines.extend(["", "Module statuses:"])
         for key, status in sorted(manifest["module_statuses"].items()):

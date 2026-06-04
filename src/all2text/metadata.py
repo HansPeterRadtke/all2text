@@ -68,7 +68,7 @@ def collect_metadata(
     metadata["xattrs"] = xattrs
     warnings.extend(xattr_warnings)
 
-    acl, acl_warnings = acl_summary(path)
+    acl, acl_warnings = acl_summary(path, options)
     metadata["acl_summary"] = acl
     warnings.extend(acl_warnings)
 
@@ -220,10 +220,14 @@ def xattrs_metadata(path: Path) -> tuple[dict[str, Any], list[str]]:
     return {"available": True, "items": items}, warnings
 
 
-def acl_summary(path: Path) -> tuple[dict[str, Any], list[str]]:
+def acl_summary(path: Path, options: RunOptions) -> tuple[dict[str, Any], list[str]]:
+    if not options.allow_external_tools:
+        return {"available": False, "enabled": False, "summary": None}, [
+            f"acl_summary_disabled_by_profile:{options.profile}"
+        ]
     getfacl = shutil.which("getfacl")
     if platform.system() != "Linux" or not getfacl:
-        return {"available": False, "summary": None}, ["acl_summary_unavailable"]
+        return {"available": False, "enabled": True, "summary": None}, ["acl_summary_unavailable"]
     try:
         completed = subprocess.run(
             [getfacl, "-cp", "--", str(path)],
@@ -233,14 +237,15 @@ def acl_summary(path: Path) -> tuple[dict[str, Any], list[str]]:
             timeout=5,
         )
     except Exception as exc:
-        return {"available": True, "summary": None}, [f"acl_summary_failed:{exc}"]
+        return {"available": True, "enabled": True, "summary": None}, [f"acl_summary_failed:{exc}"]
     if completed.returncode != 0:
         return {
             "available": True,
+            "enabled": True,
             "summary": None,
         }, [f"acl_summary_failed:{completed.stderr.strip() or completed.returncode}"]
     text = completed.stdout.strip()
-    return {"available": True, "summary": text[:4000], "truncated": len(text) > 4000}, []
+    return {"available": True, "enabled": True, "summary": text[:4000], "truncated": len(text) > 4000}, []
 
 
 def copy_supported_metadata(source: Path, target: Path, *, entry_type: str, options: RunOptions) -> list[str]:

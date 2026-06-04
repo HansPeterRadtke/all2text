@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from all2text.backends.text import decode_text_bytes
-from all2text.config import config_for_context
+from all2text.config import config_for_context, effective_provider
 from all2text.models import Classification, ConversionContext, ConversionResult
 from all2text.providers import (
     call_openai_compatible_vision,
@@ -33,12 +33,18 @@ class ImageAnalysisBackend:
     ) -> ConversionResult:
         cfg = config_for_context(ctx.config)
         image_metadata = image_metadata_light(path, classification, ctx)
-        profile, profile_warnings, pil_image = image_profile(path, classification, image_metadata)
+        profile, profile_warnings, pil_image = image_profile(
+            path,
+            classification,
+            image_metadata,
+            allow_optional_python=ctx.options.allow_optional_python,
+            profile_name=ctx.options.profile,
+        )
         statuses = provider_statuses(cfg, family="image")
 
         warnings = list(profile_warnings)
         methods = ["image_magic_metadata", "deterministic_image_profile", "provider_status_routing"]
-        ocr_result = run_ocr_if_configured(pil_image, cfg.provider("ocr"))
+        ocr_result = run_ocr_if_configured(pil_image, effective_provider(cfg, "ocr"))
         warnings.extend(ocr_result["warnings"])
         ocr_used = bool(ocr_result["used"])
         if ocr_result["attempted"]:
@@ -51,7 +57,13 @@ class ImageAnalysisBackend:
             ocr_attempted=bool(ocr_result["attempted"]),
             chart_candidate=chart_candidate,
         )
-        vlm_text, vlm_warnings, vlm_meta = maybe_call_vlm(path, pil_image, cfg.provider("vlm"), rel_path, profile)
+        vlm_text, vlm_warnings, vlm_meta = maybe_call_vlm(
+            path,
+            pil_image,
+            effective_provider(cfg, "vlm"),
+            rel_path,
+            profile,
+        )
         warnings.extend(vlm_warnings)
         vlm_used = bool(vlm_text)
         if vlm_meta:
@@ -158,6 +170,9 @@ def image_profile(
     path: Path,
     classification: Classification,
     image_metadata: dict[str, Any],
+    *,
+    allow_optional_python: bool = True,
+    profile_name: str = "pip",
 ) -> tuple[dict[str, Any], list[str], Any | None]:
     warnings: list[str] = []
     fmt = classification.concrete_format.upper()
@@ -168,17 +183,21 @@ def image_profile(
     dominant: list[str] = []
     non_white_ratio = None
     color_count_estimate = None
-    try:
-        from PIL import Image
-
-        with Image.open(path) as opened:
-            pil_image = opened.convert("RGB")
-            width, height = pil_image.size
-            mode = opened.mode
-            dominant, non_white_ratio, color_count_estimate = sampled_color_profile(pil_image)
-    except Exception as exc:
+    if not allow_optional_python:
         if fmt not in {"SVG"}:
-            warnings.append(f"pil_image_profile_unavailable:{exc}")
+            warnings.append(f"pil_image_profile_disabled_by_profile:{profile_name}")
+    else:
+        try:
+            from PIL import Image
+
+            with Image.open(path) as opened:
+                pil_image = opened.convert("RGB")
+                width, height = pil_image.size
+                mode = opened.mode
+                dominant, non_white_ratio, color_count_estimate = sampled_color_profile(pil_image)
+        except Exception as exc:
+            if fmt not in {"SVG"}:
+                warnings.append(f"pil_image_profile_unavailable:{exc}")
 
     aspect = round(float(width) / float(height), 3) if width and height else None
     profile = classify_profile(

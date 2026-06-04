@@ -31,33 +31,72 @@ output: out/reports/final.pdf.txt
 
 ## Install
 
+Lowest-detail/base install:
+
 ```bash
 cd /data/src/github/all2text
 python -m pip install -e .
 ```
 
-Core `all2text` intentionally keeps heavy dependencies optional. The config loader uses Python
-3.11+ `tomllib`, optional `tomli`, or a small fallback parser for the simple template shipped here.
-Optional groups enable native extraction paths when installed:
+Full PyPI install from source:
 
 ```bash
-python -m pip install -e '.[documents,ocr,scientific,cad]'
+python -m pip install -e '.[all-pip,dev]'
 ```
+
+Future package install:
+
+```bash
+python -m pip install 'all2text[all-pip]'
+```
+
+The `all-pip` extra contains normal PyPI packages only. It does not install external binaries,
+model files, llama.cpp servers, Tesseract itself, ffmpeg/ffprobe, LibreOffice, or system `file`.
+Core `all2text` intentionally keeps heavy dependencies optional. The config loader uses Python
+3.11+ `tomllib`, optional `tomli` on older Python, or a small fallback parser for the simple
+template shipped here. Optional groups enable native extraction paths when installed:
+
+```bash
+python -m pip install -e '.[documents,images,media,ocr,scientific,cad,geospatial]'
+```
+
+`textract` is available as a legacy extra, but it is not part of `all-pip` because practical
+operation often depends on external converter binaries and older Python dependency constraints.
 
 ## CLI
 
 ```bash
 all2text /path/to/source /path/to/output
 all2text --config /path/to/all2text.toml /path/to/source /path/to/output
+all2text --profile pip /path/to/source /path/to/output
 ```
 
 Useful options:
 
 ```bash
+all2text --profile core /path/to/source /path/to/output
+all2text --profile tools /path/to/source /path/to/output
+all2text --profile local-models /path/to/source /path/to/output
+all2text --profile full /path/to/source /path/to/output
 all2text --no-file-command --no-copy-source-stat /path/to/source /path/to/output
 all2text --max-archive-members 100 /path/to/source /path/to/output
 all2text --version
 ```
+
+Profiles:
+
+- `core`: stdlib-only deterministic extraction; no optional PyPI libraries, shell tools, or models.
+- `pip`: default/base profile; uses installed Python/PyPI extractors and never requires shell tools
+  or local model endpoints.
+- `tools`: allows optional shell tools such as `file`, `ffprobe`, `ffmpeg`, `getfacl`, or Tesseract
+  when configured and present.
+- `local-models`: allows configured local/remote-compatible model endpoints without enabling shell
+  tools.
+- `full`: enables all configured Python, tool, and model routes that are available.
+
+The CLI prints a JSON summary that includes the active profile, capability summary, missing optional
+Python libraries, disabled-by-profile tools/providers, and normal conversion counts. The manifest
+and report include the full capability table.
 
 The command prints the manifest summary as JSON and writes:
 
@@ -129,7 +168,9 @@ Native core extraction:
 - EPUB packages are listed and probed as containers;
 - EML/MBOX files are parsed with Python's standard email package, including headers, plain text
   body, attachment metadata, and original message source preservation;
-- SQLite files are opened read-only when possible to list schema objects.
+- SQLite files are opened read-only when possible to list schema objects;
+- audio/video can include Python-only `mutagen` metadata in the `pip` profile when installed;
+  ffprobe remains an external-tool route used only by `tools`/`full`.
 
 Safe placeholder coverage:
 
@@ -138,10 +179,11 @@ Safe placeholder coverage:
   containers.
 
 Image and media outputs now include layered provider routing/status reports. Top-level manifests
-also include configured provider statuses, so disabled/unavailable local llama.cpp, OCR, speech, and
-video-frame routes are visible even when no matching files are present. Outputs do not claim OCR,
-transcription, VLM understanding, chart values, CAD geometry analysis, or scientific array
-extraction unless a configured provider actually returns accepted evidence.
+also include configured provider statuses and capability status, so disabled/unavailable local
+llama.cpp, OCR, speech, shell tools, Python optional libraries, and video-frame routes are visible
+even when no matching files are present. Outputs do not claim OCR, transcription, VLM understanding,
+chart values, CAD geometry analysis, or scientific array extraction unless a configured provider
+actually returns accepted evidence.
 
 See [docs/coverage.md](docs/coverage.md) for the detailed matrix.
 

@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from all2text.capabilities import capability_report
 from all2text.config import All2TextConfig, load_config
 from all2text.backends.binary import BinaryFallbackBackend
 from all2text.detection import classify_path
@@ -53,6 +54,7 @@ def run(
     planned, planning_warnings = reserve_output_files(target_root, text_entries, dir_map)
     ctx = ConversionContext(source_root=source_root, target_root=target_root, options=options, config=config)
     registry = registry or build_default_registry(config)
+    capabilities = capability_report(config)
 
     records: list[dict[str, Any]] = []
     for entry in entries:
@@ -71,21 +73,34 @@ def run(
         "scan_first": True,
         "os": os_info(),
         "options": {
+            "profile": options.profile,
             "max_header_bytes": options.max_header_bytes,
             "max_hash_bytes": options.max_hash_bytes,
             "max_binary_sample_bytes": options.max_binary_sample_bytes,
             "max_archive_members": options.max_archive_members,
             "use_file_command": options.use_file_command,
+            "allow_optional_python": options.allow_optional_python,
+            "allow_external_tools": options.allow_external_tools,
+            "allow_local_models": options.allow_local_models,
             "copy_source_stat": options.copy_source_stat,
             "reject_target_inside_source": options.reject_target_inside_source,
         },
         "config": config.to_dict(),
+        "capabilities": capabilities,
         "provider_statuses": [status.to_dict() for status in provider_statuses(config)],
         "registry": {"backends": registry.names(), "preferred_backends": registry.preferred_backends()},
         "module_statuses": build_module_statuses(config.modules, records, registry.names()),
         "directory_collisions": directory_collisions,
         "planning_warnings": planning_warnings,
-        "summary": build_summary(records, entries, directory_collisions, planning_warnings, started),
+        "summary": build_summary(
+            records,
+            entries,
+            directory_collisions,
+            planning_warnings,
+            started,
+            options=options,
+            capabilities=capabilities,
+        ),
         "entries": records,
     }
     manifest_path, report_path = manifest_paths(target_root)

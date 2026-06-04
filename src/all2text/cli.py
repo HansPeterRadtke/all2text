@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from all2text.api import run
-from all2text.config import load_config
+from all2text.config import PROFILE_DEFAULTS, load_config, options_with_profile
 from all2text.jsonsafe import json_dumps
 from all2text.version import __version__
 
@@ -19,6 +19,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("target_folder", nargs="?")
     parser.add_argument("--version", action="store_true", help="Print the all2text version and exit.")
     parser.add_argument("--config", help="Path to an all2text TOML config file.")
+    parser.add_argument(
+        "--profile",
+        choices=sorted(PROFILE_DEFAULTS),
+        help=(
+            "Execution profile: core=stdlib only, pip=Python/PyPI only, tools=allow external "
+            "shell tools, local-models=allow configured model endpoints, full=tools plus models."
+        ),
+    )
     parser.add_argument("--no-file-command", action="store_true", help="Disable the optional system file(1) probe.")
     parser.add_argument("--no-copy-source-stat", action="store_true", help="Do not copy basic source file stat metadata to outputs.")
     parser.add_argument(
@@ -40,6 +48,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("source_folder and target_folder are required unless --version is used")
     config = load_config(args.config)
     options = config.options
+    if args.profile:
+        options = options_with_profile(options, args.profile)
     if args.no_file_command:
         options = replace(options, use_file_command=False)
     if args.no_copy_source_stat:

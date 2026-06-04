@@ -106,6 +106,60 @@ DEFAULT_MODULE_PARAMS: dict[str, dict[str, Any]] = {
     },
 }
 
+PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "core": {
+        "allow_optional_python": False,
+        "allow_external_tools": False,
+        "allow_local_models": False,
+        "use_file_command": False,
+    },
+    "pip": {
+        "allow_optional_python": True,
+        "allow_external_tools": False,
+        "allow_local_models": False,
+        "use_file_command": False,
+    },
+    "tools": {
+        "allow_optional_python": True,
+        "allow_external_tools": True,
+        "allow_local_models": False,
+        "use_file_command": True,
+    },
+    "local-models": {
+        "allow_optional_python": True,
+        "allow_external_tools": False,
+        "allow_local_models": True,
+        "use_file_command": False,
+    },
+    "full": {
+        "allow_optional_python": True,
+        "allow_external_tools": True,
+        "allow_local_models": True,
+        "use_file_command": True,
+    },
+}
+
+PROFILE_ALIASES = {
+    "base": "pip",
+    "lowest": "pip",
+    "lowest-detail": "pip",
+    "python": "pip",
+    "python-only": "pip",
+    "local_models": "local-models",
+    "models": "local-models",
+    "all": "full",
+}
+
+PROVIDER_PROFILE_REQUIREMENTS: dict[str, str] = {
+    "ocr": "external_tools",
+    "vlm": "local_models",
+    "llm_text": "local_models",
+    "chart": "local_models",
+    "document_intelligence": "local_models",
+    "speech": "local_models",
+    "video_frames": "external_tools",
+}
+
 KNOWN_BACKEND_NAMES = {
     "archive_listing_backend",
     "binary_fallback",
@@ -143,6 +197,9 @@ RUN_OPTION_POSITIVE_INT_FIELDS = {
 }
 
 RUN_OPTION_BOOL_FIELDS = {
+    "allow_external_tools",
+    "allow_local_models",
+    "allow_optional_python",
     "use_file_command",
     "copy_source_stat",
     "reject_target_inside_source",
@@ -372,7 +429,12 @@ def _run_options_from_dict(
     if not isinstance(data, dict):
         raise ValueError(_config_error("run must be a table", source_path))
     values = asdict(defaults)
+    profile = normalize_profile(data.get("profile", values.get("profile", "pip")), source_path=source_path)
+    values.update(PROFILE_DEFAULTS[profile])
+    values["profile"] = profile
     for key in values:
+        if key == "profile":
+            continue
         if key in data:
             field = f"run.{key}"
             if key in RUN_OPTION_POSITIVE_INT_FIELDS:
@@ -389,7 +451,25 @@ def _run_options_from_dict(
     return RunOptions(**values)
 
 
+def normalize_profile(value: Any, *, source_path: str | None = None) -> str:
+    profile = str(value or "pip").strip().casefold().replace("_", "-")
+    profile = PROFILE_ALIASES.get(profile, profile)
+    if profile not in PROFILE_DEFAULTS:
+        allowed = ", ".join(sorted(PROFILE_DEFAULTS))
+        raise ValueError(_config_error(f"run.profile must be one of: {allowed}; got {value!r}", source_path))
+    return profile
+
+
+def options_with_profile(options: RunOptions, profile: str) -> RunOptions:
+    normalized = normalize_profile(profile, source_path=None)
+    values = asdict(options)
+    values.update(PROFILE_DEFAULTS[normalized])
+    values["profile"] = normalized
+    return RunOptions(**values)
+
+
 def validate_config(config: All2TextConfig) -> None:
+    config.options.profile = normalize_profile(config.options.profile, source_path=config.source_path)
     for field_name in RUN_OPTION_POSITIVE_INT_FIELDS:
         setattr(
             config.options,
@@ -497,6 +577,25 @@ def validate_config(config: All2TextConfig) -> None:
                     f"providers.{task}.{key}",
                     source_path=config.source_path,
                 )
+
+
+def effective_provider(config: All2TextConfig, task: str) -> ProviderConfig:
+    provider = config.provider(task)
+    if provider_allowed_by_profile(config.options, task):
+        return provider
+    params = dict(provider.params)
+    params["disabled_by_profile"] = config.options.profile
+    params["configured_enabled"] = provider.enabled
+    return ProviderConfig(name=provider.name, enabled=False, params=params)
+
+
+def provider_allowed_by_profile(options: RunOptions, task: str) -> bool:
+    requirement = PROVIDER_PROFILE_REQUIREMENTS.get(task)
+    if requirement == "external_tools":
+        return bool(options.allow_external_tools)
+    if requirement == "local_models":
+        return bool(options.allow_local_models)
+    return True
 
 
 def _coerce_int(value: Any, field: str, *, source_path: str | None, minimum: int) -> int:

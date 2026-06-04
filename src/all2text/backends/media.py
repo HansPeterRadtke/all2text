@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from all2text.config import config_for_context
+from all2text.config import config_for_context, effective_provider
 from all2text.models import Classification, ConversionContext, ConversionResult
 from all2text.providers import provider_statuses
 
@@ -26,12 +26,22 @@ class MediaAnalysisBackend:
         ctx: ConversionContext,
     ) -> ConversionResult:
         cfg = config_for_context(ctx.config)
-        ffprobe_metadata, warnings = ffprobe(path)
+        if ctx.options.allow_external_tools:
+            ffprobe_metadata, warnings = ffprobe(path)
+        else:
+            ffprobe_metadata = None
+            warnings = [f"ffprobe_disabled_by_profile:{ctx.options.profile}"]
+        python_metadata, python_warnings = python_media_metadata(
+            path,
+            allow_optional_python=ctx.options.allow_optional_python,
+            profile=ctx.options.profile,
+        )
+        warnings.extend(python_warnings)
         family = classification.rough_category
         params = cfg.module_params(family, classification.concrete_format.casefold())
         max_ffprobe_json_chars = positive_int_or_zero(params.get("max_ffprobe_json_chars"))
         statuses = provider_statuses(cfg, family=family)
-        profile = media_profile(classification, ffprobe_metadata)
+        profile = media_profile(classification, ffprobe_metadata, python_metadata)
         stages = media_stages(classification, profile, statuses, cfg)
         ffprobe_output_metadata, ffprobe_truncated = limit_ffprobe_metadata(
             ffprobe_metadata,
@@ -51,11 +61,14 @@ class MediaAnalysisBackend:
             classification,
             limitation,
             ffprobe_output_metadata,
+            python_metadata,
             profile,
             stages,
             [status.to_dict() for status in statuses],
         )
         methods = ["media_layered_metadata"]
+        if python_metadata:
+            methods.append("python_mutagen_metadata")
         if ffprobe_metadata:
             methods.append("ffprobe_metadata")
         return ConversionResult(
@@ -67,6 +80,7 @@ class MediaAnalysisBackend:
                 "ffprobe": ffprobe_output_metadata or None,
                 "ffprobe_truncated": ffprobe_truncated,
                 "max_ffprobe_json_chars": max_ffprobe_json_chars,
+                "python_media_metadata": python_metadata,
                 "profile": profile,
                 "stages": stages,
                 "provider_statuses": [status.to_dict() for status in statuses],
@@ -110,7 +124,59 @@ def ffprobe(path: Path) -> tuple[dict[str, object] | None, list[str]]:
         return {"raw_stdout": completed.stdout[:4000]}, ["ffprobe_json_parse_failed"]
 
 
-def media_profile(classification: Classification, ffprobe_metadata: dict[str, object] | None) -> dict[str, Any]:
+def python_media_metadata(
+    path: Path,
+    *,
+    allow_optional_python: bool,
+    profile: str,
+) -> tuple[dict[str, object] | None, list[str]]:
+    if not allow_optional_python:
+        return None, [f"mutagen_metadata_disabled_by_profile:{profile}"]
+    try:
+        import mutagen
+    except Exception as exc:
+        return None, [f"mutagen_unavailable:{exc}"]
+    try:
+        media = mutagen.File(path)
+    except Exception as exc:
+        return None, [f"mutagen_open_failed:{exc}"]
+    if media is None:
+        return None, ["mutagen_unrecognized_media"]
+    info = getattr(media, "info", None)
+    tags = getattr(media, "tags", None)
+    metadata: dict[str, object] = {
+        "library": "mutagen",
+        "type": type(media).__name__,
+        "mime": list(getattr(media, "mime", []) or []),
+        "duration_seconds": round(float(getattr(info, "length")), 3)
+        if getattr(info, "length", None) is not None
+        else None,
+        "bitrate": getattr(info, "bitrate", None),
+        "sample_rate": getattr(info, "sample_rate", None),
+        "channels": getattr(info, "channels", None),
+        "pprint": str(media.pprint())[:4000],
+    }
+    tag_dict: dict[str, object] = {}
+    if tags is not None:
+        for key in list(tags.keys())[:100]:
+            value = tags.get(key)
+            tag_dict[str(key)] = str(value)[:500]
+    if tag_dict:
+        metadata["tags"] = tag_dict
+    streams: list[dict[str, object]] = []
+    if metadata.get("sample_rate") is not None or metadata.get("channels") is not None:
+        streams.append({"type": "audio", "source": "mutagen"})
+    if any(str(item).startswith("video/") for item in metadata.get("mime", []) or []):
+        streams.append({"type": "video", "source": "mutagen"})
+    metadata["streams"] = streams
+    return metadata, []
+
+
+def media_profile(
+    classification: Classification,
+    ffprobe_metadata: dict[str, object] | None,
+    python_metadata: dict[str, object] | None = None,
+) -> dict[str, Any]:
     streams = ffprobe_metadata.get("streams", []) if isinstance(ffprobe_metadata, dict) else []
     if not isinstance(streams, list):
         streams = []
@@ -118,6 +184,9 @@ def media_profile(classification: Classification, ffprobe_metadata: dict[str, ob
     video_streams = [stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "video"]
     subtitles = [stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "subtitle"]
     tags = (ffprobe_metadata.get("format", {}) or {}).get("tags", {}) if isinstance(ffprobe_metadata, dict) else {}
+    python_streams = python_metadata.get("streams", []) if isinstance(python_metadata, dict) else []
+    if not isinstance(python_streams, list):
+        python_streams = []
     language_tags = sorted(
         {
             str(stream.get("tags", {}).get("language"))
@@ -139,12 +208,16 @@ def media_profile(classification: Classification, ffprobe_metadata: dict[str, ob
         "family": classification.rough_category,
         "format": classification.concrete_format,
         "coarse_classification": coarse,
-        "audio_stream_count": len(audio_streams),
-        "video_stream_count": len(video_streams),
+        "audio_stream_count": len(audio_streams) or _python_stream_count(python_streams, "audio"),
+        "video_stream_count": len(video_streams) or _python_stream_count(python_streams, "video"),
         "subtitle_stream_count": len(subtitles),
-        "duration_seconds": _duration(ffprobe_metadata),
+        "duration_seconds": _duration(ffprobe_metadata) or _python_duration(python_metadata),
         "language_tags": language_tags,
-        "format_tags_present": bool(tags),
+        "format_tags_present": bool(tags) or bool((python_metadata or {}).get("tags")),
+        "metadata_sources": {
+            "ffprobe": bool(ffprobe_metadata),
+            "python_mutagen": bool(python_metadata),
+        },
         "classification_note": (
             "Content class such as speech/music/song/noise/screen recording/lecture is not "
             "inferred without a configured analyzer."
@@ -163,8 +236,8 @@ def media_stages(
     frame_status = next((status for status in statuses if status.name == "video_frames"), None)
     ocr_status = next((status for status in statuses if status.name == "ocr"), None)
     vlm_status = next((status for status in statuses if status.name == "vlm"), None)
-    speech_provider = cfg.provider("speech")
-    frame_provider = cfg.provider("video_frames")
+    speech_provider = effective_provider(cfg, "speech")
+    frame_provider = effective_provider(cfg, "video_frames")
     speech_likely = profile.get("coarse_classification") in {
         "unknown_audio_content",
         "mixed_audio_video",
@@ -377,6 +450,7 @@ def render_media_text(
     classification: Classification,
     limitation: str,
     ffprobe_metadata: dict[str, object] | None,
+    python_metadata: dict[str, object] | None,
     profile: dict[str, Any],
     stages: dict[str, Any],
     statuses: list[dict[str, Any]],
@@ -399,6 +473,10 @@ def render_media_text(
         lines.extend(["", "ffprobe metadata:", json.dumps(ffprobe_metadata, indent=2, ensure_ascii=False)])
     else:
         lines.extend(["", "ffprobe metadata: <unavailable>"])
+    if python_metadata:
+        lines.extend(["", "Python media metadata:", json.dumps(python_metadata, indent=2, ensure_ascii=False)])
+    else:
+        lines.extend(["", "Python media metadata: <unavailable>"])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -413,3 +491,17 @@ def _duration(ffprobe_metadata: dict[str, object] | None) -> float | None:
         return round(float(value), 3)
     except Exception:
         return None
+
+
+def _python_duration(python_metadata: dict[str, object] | None) -> float | None:
+    if not isinstance(python_metadata, dict):
+        return None
+    try:
+        value = python_metadata.get("duration_seconds")
+        return round(float(value), 3) if value is not None else None
+    except Exception:
+        return None
+
+
+def _python_stream_count(streams: list[object], stream_type: str) -> int:
+    return sum(1 for item in streams if isinstance(item, dict) and item.get("type") == stream_type)

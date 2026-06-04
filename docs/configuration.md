@@ -2,6 +2,7 @@
 
 `all2text` accepts a TOML config file with two main sections:
 
+- `[run]` chooses the execution profile and global safety/resource options.
 - `[modules]` chooses a backend by file family or format key.
 - `[providers.<task>]` configures optional engines used by those backends.
 
@@ -19,6 +20,38 @@ from all2text import load_config, run
 config = load_config("/path/to/all2text.toml")
 manifest = run("source", "out", config=config)
 ```
+
+## Execution Profiles
+
+The default profile is `pip`, the lowest-detail/base profile intended for normal installs. It uses
+deterministic Python and installed PyPI packages, but it does not require shell tools, model servers,
+or model downloads.
+
+```toml
+[run]
+profile = "pip"
+```
+
+Supported profiles:
+
+- `core`: stdlib-only deterministic extraction. Optional PyPI libraries, shell tools, and local
+  model providers are disabled by profile.
+- `pip`: default/base mode. Optional Python/PyPI extractors are enabled when installed. External
+  shell tools and local model providers are disabled by profile.
+- `tools`: enables optional shell tools such as `file`, `ffprobe`, `ffmpeg`, `getfacl`, and
+  Tesseract when configured and available. Local model providers remain disabled.
+- `local-models`: enables configured local/remote-compatible model providers without enabling shell
+  tools.
+- `full`: enables installed Python libraries, configured shell tools, and configured local model
+  providers.
+
+Profile aliases `base`, `lowest`, `lowest-detail`, `python`, and `python-only` normalize to `pip`.
+`local_models` normalizes to `local-models`, and `all` normalizes to `full`.
+
+Explicit run booleans can tighten a profile. For example, `profile = "tools"` with
+`use_file_command = false` still allows ffprobe/getfacl/Tesseract but disables the `file(1)` MIME
+probe. A restrictive profile wins over provider config: enabling `[providers.vlm]` under `pip` is
+reported as `VLM disabled by profile:pip` and no endpoint is called.
 
 ## Module Selection
 
@@ -74,7 +107,8 @@ Current native document parameters:
 - `spreadsheet.max_cells_per_sheet`: bounds non-empty XLSX cells emitted per worksheet; default is
   `20000`, and `0` means no per-sheet cell cap.
 - `audio.max_ffprobe_json_chars` and `video.max_ffprobe_json_chars`: bound ffprobe JSON emitted in
-  outputs and manifests; default is `20000`, and `0` means no ffprobe JSON cap.
+  outputs and manifests when the `tools`/`full` profile permits ffprobe; default is `20000`, and
+  `0` means no ffprobe JSON cap.
 
 When a module limit skips content, the output and manifest record the limit, warning, and limitation.
 Numeric parameters are validated. Negative limits, zero where a positive runtime value is required,
@@ -117,6 +151,9 @@ auto_invoke = false
 `auto_invoke = false` records the provider configuration and route without making a model request.
 Set it to `true` only when the endpoint is running and you want the backend to call it.
 Provider task names, provider names, and numeric runtime settings are validated at config load time.
+Providers are also filtered by profile at runtime. Tool-backed providers such as Tesseract OCR and
+ffmpeg frame sampling require `tools` or `full`; model-backed providers such as VLM, text LLM,
+speech, chart specialists, and document intelligence require `local-models` or `full`.
 
 Current core provider behavior:
 
@@ -136,6 +173,13 @@ temperature, prompt policy, tenant IDs, or tool-specific settings without changi
 The top-level manifest includes `provider_statuses` for the configured providers even if the run
 contains no image/audio/video files. Per-file image and media records also include family-specific
 provider statuses, route plans, and stage blockers.
+
+The top-level manifest also includes `capabilities`, which lists:
+
+- active profile and profile gates;
+- available/missing optional Python libraries;
+- external tool status, including disabled-by-profile and executable-not-found states;
+- a compact summary copied into stdout and `_conversion_report.txt`.
 
 ## Truthfulness
 
