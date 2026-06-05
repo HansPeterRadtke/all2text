@@ -5,8 +5,9 @@ import struct
 from pathlib import Path
 from typing import Any
 
+from all2text.capabilities import resolve_external_tool
 from all2text.backends.text import decode_text_bytes
-from all2text.config import config_for_context, effective_provider
+from all2text.config import ProviderConfig, config_for_context, effective_provider
 from all2text.models import Classification, ConversionContext, ConversionResult
 from all2text.providers import (
     call_openai_compatible_vision,
@@ -37,14 +38,24 @@ class ImageAnalysisBackend:
             path,
             classification,
             image_metadata,
-            allow_optional_python=ctx.options.allow_optional_python,
+            allow_optional_python=ctx.options.allow_optional_python and ctx.options.auto_detect_python,
             profile_name=ctx.options.profile,
+            optional_python_disabled_reason=(
+                f"disabled_by_profile:{ctx.options.profile}"
+                if not ctx.options.allow_optional_python
+                else "disabled_by_run.auto_detect_python=false"
+            ),
         )
         statuses = provider_statuses(cfg, family="image")
 
         warnings = list(profile_warnings)
         methods = ["image_magic_metadata", "deterministic_image_profile", "provider_status_routing"]
-        ocr_result = run_ocr_if_configured(pil_image, effective_provider(cfg, "ocr"))
+        ocr_provider = provider_with_tool_path(
+            effective_provider(cfg, "ocr"),
+            "tesseract_cmd",
+            resolve_external_tool(cfg, "tesseract").get("source"),
+        )
+        ocr_result = run_ocr_if_configured(pil_image, ocr_provider)
         warnings.extend(ocr_result["warnings"])
         ocr_used = bool(ocr_result["used"])
         if ocr_result["attempted"]:
@@ -142,6 +153,14 @@ class ImageAnalysisBackend:
 ImagePlaceholderBackend = ImageAnalysisBackend
 
 
+def provider_with_tool_path(provider: ProviderConfig, key: str, source: object | None) -> ProviderConfig:
+    if not source:
+        return provider
+    params = dict(provider.params)
+    params[key] = str(source)
+    return ProviderConfig(name=provider.name, enabled=provider.enabled, params=params)
+
+
 def image_metadata_light(path: Path, classification: Classification, ctx: ConversionContext) -> dict[str, Any]:
     header = read_header(path, max(ctx.options.max_header_bytes, 128))
     fmt = classification.concrete_format.upper()
@@ -173,6 +192,7 @@ def image_profile(
     *,
     allow_optional_python: bool = True,
     profile_name: str = "pip",
+    optional_python_disabled_reason: str = "",
 ) -> tuple[dict[str, Any], list[str], Any | None]:
     warnings: list[str] = []
     fmt = classification.concrete_format.upper()
@@ -185,7 +205,8 @@ def image_profile(
     color_count_estimate = None
     if not allow_optional_python:
         if fmt not in {"SVG"}:
-            warnings.append(f"pil_image_profile_disabled_by_profile:{profile_name}")
+            reason = optional_python_disabled_reason or f"disabled_by_profile:{profile_name}"
+            warnings.append(f"pil_image_profile_disabled:{reason}")
     else:
         try:
             from PIL import Image
@@ -297,6 +318,8 @@ def run_ocr_if_configured(image: Any | None, provider: Any) -> dict[str, Any]:
     try:
         import pytesseract
 
+        if provider.get("tesseract_cmd"):
+            pytesseract.pytesseract.tesseract_cmd = str(provider.get("tesseract_cmd"))
         text = pytesseract.image_to_string(image, lang=str(provider.get("language", "eng")), timeout=int(provider.get("timeout_seconds", 30)))
     except Exception as exc:
         result["warnings"].append(f"ocr_failed:{exc}")

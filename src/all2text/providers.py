@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import base64
+import importlib.util
 import json
-import shutil
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
@@ -10,7 +10,24 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+from all2text.capabilities import resolve_external_tool
 from all2text.config import ProviderConfig, config_for_context, effective_provider
+
+TEXT_MODEL_ENDPOINTS = [
+    "http://127.0.0.1:14829/v1",
+    "http://127.0.0.1:8080/v1",
+    "http://127.0.0.1:8000/v1",
+    "http://127.0.0.1:1234/v1",
+    "http://127.0.0.1:11434/v1",
+]
+
+VISION_MODEL_ENDPOINTS = [
+    "http://127.0.0.1:14830/v1",
+    "http://127.0.0.1:8080/v1",
+    "http://127.0.0.1:8000/v1",
+    "http://127.0.0.1:1234/v1",
+    "http://127.0.0.1:11434/v1",
+]
 
 
 @dataclass(frozen=True)
@@ -49,11 +66,13 @@ def provider_statuses(config: object | None, *, family: str | None = None) -> li
                     effective_provider(cfg, "ocr"),
                     configured=cfg.provider("ocr"),
                     profile=cfg.options.profile,
+                    tool=resolve_external_tool(cfg, "tesseract"),
                 ),
                 vlm_status(
                     effective_provider(cfg, "vlm"),
                     configured=cfg.provider("vlm"),
                     profile=cfg.options.profile,
+                    auto_detect=cfg.options.auto_detect_local_models,
                 ),
             ]
         )
@@ -86,6 +105,7 @@ def provider_statuses(config: object | None, *, family: str | None = None) -> li
                 effective_provider(cfg, "video_frames"),
                 configured=cfg.provider("video_frames"),
                 profile=cfg.options.profile,
+                tool=resolve_external_tool(cfg, "ffmpeg"),
             )
         )
     if family in {None, "text"}:
@@ -94,6 +114,7 @@ def provider_statuses(config: object | None, *, family: str | None = None) -> li
                 effective_provider(cfg, "llm_text"),
                 configured=cfg.provider("llm_text"),
                 profile=cfg.options.profile,
+                auto_detect=cfg.options.auto_detect_local_models,
             )
         )
     return statuses
@@ -163,8 +184,14 @@ def image_family(image_profile: dict[str, Any], *, chart_candidate: bool) -> str
     return "scene_or_photo"
 
 
-def ocr_status(provider: ProviderConfig, *, configured: ProviderConfig, profile: str) -> ProviderStatus:
-    executable = shutil.which("tesseract") if provider.name == "tesseract" else None
+def ocr_status(
+    provider: ProviderConfig,
+    *,
+    configured: ProviderConfig,
+    profile: str,
+    tool: dict[str, Any],
+) -> ProviderStatus:
+    executable = str(tool["source"]) if provider.name == "tesseract" and tool.get("source") else None
     enabled = provider.enabled and provider.name != "none"
     error = None
     available = False
@@ -173,8 +200,12 @@ def ocr_status(provider: ProviderConfig, *, configured: ProviderConfig, profile:
     elif not enabled:
         error = "OCR disabled by config"
     elif provider.name == "tesseract":
-        available = bool(executable)
-        error = None if executable else "tesseract executable not found"
+        pytesseract_available = importlib.util.find_spec("pytesseract") is not None
+        available = bool(executable and pytesseract_available)
+        if not executable:
+            error = str(tool.get("error") or "tesseract executable not found")
+        elif not pytesseract_available:
+            error = "Python package not installed for OCR provider: pytesseract"
     else:
         error = f"OCR provider is not implemented in all2text core: {provider.name}"
     return ProviderStatus(
@@ -191,11 +222,22 @@ def ocr_status(provider: ProviderConfig, *, configured: ProviderConfig, profile:
             "profile": profile,
             "language": provider.get("language", "eng"),
             "auto_invoke": bool(provider.get("auto_invoke", False)),
+            "python_package": "pytesseract",
+            "python_package_available": (
+                importlib.util.find_spec("pytesseract") is not None if provider.name == "tesseract" else None
+            ),
+            "tool": tool,
         },
     )
 
 
-def vlm_status(provider: ProviderConfig, *, configured: ProviderConfig, profile: str) -> ProviderStatus:
+def vlm_status(
+    provider: ProviderConfig,
+    *,
+    configured: ProviderConfig,
+    profile: str,
+    auto_detect: bool,
+) -> ProviderStatus:
     enabled = provider.enabled and provider.name != "none"
     base_url = str(provider.get("base_url", "") or "").rstrip("/")
     model = str(provider.get("model", "") or "")
@@ -210,18 +252,25 @@ def vlm_status(provider: ProviderConfig, *, configured: ProviderConfig, profile:
         error = f"VLM provider is not implemented in all2text core: {provider.name}"
     elif not base_url or not model:
         error = "openai-compatible VLM requires base_url and model"
-    elif not bool(provider.get("auto_invoke", False)):
-        error = "openai-compatible VLM configured but auto_invoke=false; endpoint not probed"
     else:
-        endpoint_probe = probe_openai_compatible_endpoint(base_url, model)
+        endpoint_probe = discover_openai_compatible_endpoint(
+            provider,
+            model=model,
+            configured_base_url=base_url,
+            defaults=VISION_MODEL_ENDPOINTS,
+            auto_detect=auto_detect and bool(provider.get("auto_detect", True)),
+        )
         available = bool(endpoint_probe.get("reachable"))
-        error = None if available else str(endpoint_probe.get("error") or "openai-compatible VLM endpoint unreachable")
+        if available and not bool(provider.get("auto_invoke", False)):
+            error = "openai-compatible VLM reachable but auto_invoke=false; not invoked"
+        elif not available:
+            error = str(endpoint_probe.get("error") or "openai-compatible VLM endpoint unreachable")
     return ProviderStatus(
         name="vlm",
         kind="vision_language_model",
         enabled=enabled,
         available=available,
-        source=base_url or None,
+        source=str((endpoint_probe or {}).get("base_url") or base_url or "") or None,
         error=error,
         details={
             "provider": provider.name,
@@ -235,7 +284,13 @@ def vlm_status(provider: ProviderConfig, *, configured: ProviderConfig, profile:
     )
 
 
-def llm_text_status(provider: ProviderConfig, *, configured: ProviderConfig, profile: str) -> ProviderStatus:
+def llm_text_status(
+    provider: ProviderConfig,
+    *,
+    configured: ProviderConfig,
+    profile: str,
+    auto_detect: bool,
+) -> ProviderStatus:
     enabled = provider.enabled and provider.name != "none"
     base_url = str(provider.get("base_url", "") or "").rstrip("/")
     model = str(provider.get("model", "") or "")
@@ -252,19 +307,25 @@ def llm_text_status(provider: ProviderConfig, *, configured: ProviderConfig, pro
     elif not base_url or not model:
         error = "openai-compatible text LLM requires base_url and model"
         available = False
-    elif not bool(provider.get("auto_invoke", False)):
-        error = "openai-compatible text LLM configured but auto_invoke=false; endpoint not probed"
-        available = False
     else:
-        endpoint_probe = probe_openai_compatible_endpoint(base_url, model)
+        endpoint_probe = discover_openai_compatible_endpoint(
+            provider,
+            model=model,
+            configured_base_url=base_url,
+            defaults=TEXT_MODEL_ENDPOINTS,
+            auto_detect=auto_detect and bool(provider.get("auto_detect", True)),
+        )
         available = bool(endpoint_probe.get("reachable"))
-        error = None if available else str(endpoint_probe.get("error") or "openai-compatible text LLM endpoint unreachable")
+        if available and not bool(provider.get("auto_invoke", False)):
+            error = "openai-compatible text LLM reachable but auto_invoke=false; not invoked"
+        elif not available:
+            error = str(endpoint_probe.get("error") or "openai-compatible text LLM endpoint unreachable")
     return ProviderStatus(
         name="llm_text",
         kind="text_language_model",
         enabled=enabled,
         available=available,
-        source=base_url or None,
+        source=str((endpoint_probe or {}).get("base_url") or base_url or "") or None,
         error=error,
         details={
             "provider": provider.name,
@@ -373,9 +434,15 @@ def speech_status(provider: ProviderConfig, *, configured: ProviderConfig, profi
     )
 
 
-def video_frame_status(provider: ProviderConfig, *, configured: ProviderConfig, profile: str) -> ProviderStatus:
+def video_frame_status(
+    provider: ProviderConfig,
+    *,
+    configured: ProviderConfig,
+    profile: str,
+    tool: dict[str, Any],
+) -> ProviderStatus:
     enabled = provider.enabled and provider.name != "none"
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = str(tool["source"]) if tool.get("source") else None
     error = None
     available = False
     if provider.get("disabled_by_profile"):
@@ -384,7 +451,7 @@ def video_frame_status(provider: ProviderConfig, *, configured: ProviderConfig, 
         error = "video frame provider disabled by config"
     elif provider.name == "ffmpeg":
         available = bool(ffmpeg)
-        error = None if ffmpeg else "ffmpeg executable not found"
+        error = None if ffmpeg else str(tool.get("error") or "ffmpeg executable not found")
     else:
         error = f"video frame provider is not implemented in all2text core: {provider.name}"
     return ProviderStatus(
@@ -402,15 +469,52 @@ def video_frame_status(provider: ProviderConfig, *, configured: ProviderConfig, 
             "sample_frames": bool(provider.get("sample_frames", False)),
             "ocr": bool(provider.get("ocr", False)),
             "vlm": bool(provider.get("vlm", False)),
+            "tool": tool,
         },
     )
 
 
-def probe_openai_compatible_endpoint(base_url: str, model: str) -> dict[str, Any]:
+def discover_openai_compatible_endpoint(
+    provider: ProviderConfig,
+    *,
+    model: str,
+    configured_base_url: str,
+    defaults: list[str],
+    auto_detect: bool,
+) -> dict[str, Any]:
+    timeout = float(provider.get("discovery_timeout_seconds", provider.get("timeout_seconds", 1.0)) or 1.0)
+    candidates: list[str] = []
+    if configured_base_url:
+        candidates.append(configured_base_url)
+    if auto_detect:
+        candidates.extend(defaults)
+    unique_candidates = list(dict.fromkeys(url.rstrip("/") for url in candidates if url))
+    attempts: list[dict[str, Any]] = []
+    for base_url in unique_candidates:
+        attempt = probe_openai_compatible_endpoint(base_url, model, timeout_seconds=timeout)
+        attempts.append(attempt)
+        if attempt.get("reachable"):
+            return {**attempt, "base_url": base_url, "attempts": attempts}
+    error = attempts[-1].get("error") if attempts else "no OpenAI-compatible endpoint configured"
+    return {
+        "reachable": False,
+        "base_url": configured_base_url or None,
+        "model": model,
+        "attempts": attempts,
+        "error": error,
+    }
+
+
+def probe_openai_compatible_endpoint(
+    base_url: str,
+    model: str,
+    *,
+    timeout_seconds: float = 1.0,
+) -> dict[str, Any]:
     url = f"{base_url.rstrip('/')}/models"
     request = urllib.request.Request(url, method="GET")
     try:
-        with urllib.request.urlopen(request, timeout=1.0) as response:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             data = json.loads(response.read().decode("utf-8"))
     except Exception as exc:
         return {"reachable": False, "url": url, "model": model, "error": str(exc)}
@@ -424,6 +528,7 @@ def probe_openai_compatible_endpoint(base_url: str, model: str) -> dict[str, Any
                     model_names.append(str(value))
     return {
         "reachable": True,
+        "base_url": base_url.rstrip("/"),
         "url": url,
         "model": model,
         "model_list_contains_configured_model": model in model_names if model_names else None,
@@ -451,6 +556,20 @@ def call_openai_compatible_vision(
         return None, ["vlm_call_skipped_auto_invoke_false"], {"base_url": base_url, "model": model}
     if not base_url or not model:
         return None, ["vlm_call_skipped_missing_base_url_or_model"], {"base_url": base_url, "model": model}
+    endpoint_probe = discover_openai_compatible_endpoint(
+        provider,
+        model=model,
+        configured_base_url=base_url,
+        defaults=VISION_MODEL_ENDPOINTS,
+        auto_detect=bool(provider.get("auto_detect", True)),
+    )
+    if not endpoint_probe.get("reachable"):
+        return None, ["vlm_call_skipped_endpoint_unreachable"], {
+            "base_url": base_url,
+            "model": model,
+            "endpoint_probe": endpoint_probe,
+        }
+    base_url = str(endpoint_probe.get("base_url") or base_url).rstrip("/")
     data_url = f"data:{mime_type};base64," + base64.b64encode(image_bytes).decode("ascii")
     payload = {
         "model": model,
@@ -477,9 +596,9 @@ def call_openai_compatible_vision(
             data = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         warnings.append(f"vlm_call_failed:{exc}")
-        return None, warnings, {"base_url": base_url, "model": model}
+        return None, warnings, {"base_url": base_url, "model": model, "endpoint_probe": endpoint_probe}
     content = str((((data.get("choices") or [{}])[0].get("message") or {}).get("content")) or "").strip()
-    return content or None, warnings, {"base_url": base_url, "model": model}
+    return content or None, warnings, {"base_url": base_url, "model": model, "endpoint_probe": endpoint_probe}
 
 
 def image_to_png_bytes(image: Any) -> bytes | None:

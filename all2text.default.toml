@@ -4,15 +4,18 @@
 #   all2text --config /path/to/all2text.toml /path/to/source /path/to/output
 
 [run]
-profile = "pip"
+profile = "auto"
 max_header_bytes = 4096
 max_hash_bytes = 268435456
 max_binary_sample_bytes = 1048576
 max_archive_members = 5000
-use_file_command = false
+use_file_command = true
+auto_detect_python = true
+auto_detect_tools = true
+auto_detect_local_models = true
 allow_optional_python = true
-allow_external_tools = false
-allow_local_models = false
+allow_external_tools = true
+allow_local_models = true
 copy_source_stat = true
 reject_target_inside_source = true
 
@@ -54,36 +57,40 @@ backend = "media_analysis_backend"
 max_ffprobe_json_chars = 20000
 
 [providers.ocr]
-name = "none"
-enabled = false
+name = "tesseract"
+enabled = true
 language = "eng"
 timeout_seconds = 30
 preprocess = "none"
 min_characters = 4
 min_alnum_ratio = 0.35
 min_confidence = 35
-auto_invoke = false
+auto_invoke = true
 
 [providers.vlm]
 name = "openai_compatible"
-enabled = false
+enabled = true
 base_url = "http://127.0.0.1:14830/v1"
 model = "Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf"
 timeout_seconds = 120
+discovery_timeout_seconds = 0.5
 max_tokens = 300
 temperature = 0
 prompt = "Describe visible evidence only."
+auto_detect = true
 auto_invoke = false
 
 [providers.llm_text]
 name = "openai_compatible"
-enabled = false
+enabled = true
 base_url = "http://127.0.0.1:14829/v1"
 model = "Qwen2.5-14B-Instruct-Q4_K_M.gguf"
 timeout_seconds = 120
+discovery_timeout_seconds = 0.5
 max_tokens = 512
 temperature = 0
 prompt = "Summarize extracted text using only supplied evidence."
+auto_detect = true
 auto_invoke = false
 
 [providers.chart]
@@ -124,3 +131,33 @@ timeout_seconds = 120
 auto_invoke = false
 ocr = false
 vlm = false
+
+[tools.file]
+executable = "file"
+path = ""
+timeout_seconds = 5
+
+[tools.getfacl]
+executable = "getfacl"
+path = ""
+timeout_seconds = 5
+
+[tools.ffprobe]
+executable = "ffprobe"
+path = ""
+timeout_seconds = 15
+
+[tools.ffmpeg]
+executable = "ffmpeg"
+path = ""
+timeout_seconds = 120
+
+[tools.tesseract]
+executable = "tesseract"
+path = ""
+timeout_seconds = 30
+
+[tools.libreoffice]
+executable = "libreoffice"
+path = ""
+timeout_seconds = 120

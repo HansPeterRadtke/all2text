@@ -9,15 +9,18 @@ EntryType = Literal["directory", "file", "symlink", "other"]
 
 @dataclass
 class RunOptions:
-    profile: str = "pip"
+    profile: str = "auto"
     max_header_bytes: int = 4096
     max_hash_bytes: int = 256 * 1024 * 1024
     max_binary_sample_bytes: int = 1024 * 1024
     max_archive_members: int = 5000
-    use_file_command: bool = False
+    use_file_command: bool = True
+    auto_detect_python: bool = True
+    auto_detect_tools: bool = True
+    auto_detect_local_models: bool = True
     allow_optional_python: bool = True
-    allow_external_tools: bool = False
-    allow_local_models: bool = False
+    allow_external_tools: bool = True
+    allow_local_models: bool = True
     copy_source_stat: bool = True
     reject_target_inside_source: bool = True
 

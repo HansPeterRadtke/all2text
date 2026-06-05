@@ -23,9 +23,9 @@ python -m pip install 'all2text[all-pip]'
 
 `all-pip` installs normal Python/PyPI packages only. It does not install external binaries,
 llama.cpp servers, local models, Tesseract itself, ffmpeg/ffprobe, LibreOffice, or system `file`.
-Optional dependency groups enable native paths and future/external backends. The document group is
-used by the default document backend when installed; providers such as OCR/VLM still require config
-and a permissive profile before they are invoked.
+Optional dependency groups enable native paths and future/external backends. Installed optional
+Python packages are used automatically. External binaries and local model endpoints are detected
+automatically when allowed and available; missing capabilities are reported and are not fatal.
 
 ```bash
 python -m pip install -e '.[documents,images,media,ocr,scientific,cad,geospatial]'
@@ -36,7 +36,7 @@ python -m pip install -e '.[documents,images,media,ocr,scientific,cad,geospatial
 ```bash
 all2text SOURCE_FOLDER TARGET_FOLDER
 all2text --config all2text.default.toml SOURCE_FOLDER TARGET_FOLDER
-all2text --profile pip SOURCE_FOLDER TARGET_FOLDER
+all2text --capabilities
 ```
 
 The target folder must not be inside the source folder by default.
@@ -45,7 +45,9 @@ Options:
 
 - `--version`: print package version.
 - `--config PATH`: load a TOML config for module and provider selection.
-- `--profile PROFILE`: choose `core`, `pip`, `tools`, `local-models`, or `full`.
+- `--capabilities` / `--detect-capabilities`: print automatic discovery status and exit.
+- `--profile PROFILE`: advanced safety override; choose `auto`, `core`, `pip`, `tools`,
+  `local-models`, or `full`.
 - `--no-file-command`: skip the optional `file(1)` probe.
 - `--no-copy-source-stat`: skip `copystat`/xattr copying to outputs.
 - `--allow-target-inside-source`: bypass the target-inside-source guard.
@@ -58,16 +60,22 @@ TARGET_FOLDER/_conversion_manifest.json
 TARGET_FOLDER/_conversion_report.txt
 ```
 
-Profile meanings:
+Default behavior is automatic: deterministic core extraction plus installed optional Python
+libraries, safe external tools found on PATH/configured paths, and configured/reachable local
+OpenAI-compatible endpoints. Endpoint discovery uses bounded local `/v1/models` GET requests and
+does not send source files. Actual model/VLM calls require enabled providers and `auto_invoke=true`.
+
+Profile meanings as safety presets:
 
 - `core`: stdlib-only deterministic extraction; no optional Python libraries, shell tools, or models.
-- `pip`: default/base profile; use installed PyPI packages and do not require shell tools or models.
+- `pip`: Python/PyPI-only extraction; disables shell tools and local models.
 - `tools`: allow optional shell tools when configured and available.
 - `local-models`: allow configured model endpoints/providers without enabling shell tools.
 - `full`: allow installed Python libraries, configured tools, and configured model providers.
 
-The printed summary includes `profile`, profile gates, and a `capability_summary`. The manifest and
-report include full optional Python package status, external tool status, and provider status.
+The printed summary includes automatic detection gates, `capability_summary`, and
+`provider_summary`. The manifest and report include full optional Python package status, external
+tool status, and provider status.
 
 Every source non-directory entry receives one output path by appending `.txt` to the full original
 filename. Examples:

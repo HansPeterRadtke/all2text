@@ -55,11 +55,12 @@ def run(
     ctx = ConversionContext(source_root=source_root, target_root=target_root, options=options, config=config)
     registry = registry or build_default_registry(config)
     capabilities = capability_report(config)
+    provider_status_list = [status.to_dict() for status in provider_statuses(config)]
 
     records: list[dict[str, Any]] = []
     for entry in entries:
         if entry.entry_type == "directory":
-            records.append(directory_record(entry, options))
+            records.append(directory_record(entry, options, config))
             continue
         records.append(convert_entry(entry, planned[entry.relative_path], ctx, registry))
 
@@ -79,6 +80,9 @@ def run(
             "max_binary_sample_bytes": options.max_binary_sample_bytes,
             "max_archive_members": options.max_archive_members,
             "use_file_command": options.use_file_command,
+            "auto_detect_python": options.auto_detect_python,
+            "auto_detect_tools": options.auto_detect_tools,
+            "auto_detect_local_models": options.auto_detect_local_models,
             "allow_optional_python": options.allow_optional_python,
             "allow_external_tools": options.allow_external_tools,
             "allow_local_models": options.allow_local_models,
@@ -87,7 +91,7 @@ def run(
         },
         "config": config.to_dict(),
         "capabilities": capabilities,
-        "provider_statuses": [status.to_dict() for status in provider_statuses(config)],
+        "provider_statuses": provider_status_list,
         "registry": {"backends": registry.names(), "preferred_backends": registry.preferred_backends()},
         "module_statuses": build_module_statuses(config.modules, records, registry.names()),
         "directory_collisions": directory_collisions,
@@ -100,6 +104,7 @@ def run(
             started,
             options=options,
             capabilities=capabilities,
+            provider_statuses=provider_status_list,
         ),
         "entries": records,
     }
@@ -110,12 +115,13 @@ def run(
     return safe_manifest
 
 
-def directory_record(entry: TreeEntry, options: RunOptions) -> dict[str, Any]:
+def directory_record(entry: TreeEntry, options: RunOptions, config: All2TextConfig | None = None) -> dict[str, Any]:
     metadata = collect_metadata(
         entry.source_path,
         entry_type="directory",
         link_target=entry.link_target,
         options=options,
+        config=config,
     )
     return {
         "relative_path": rel_text(entry.relative_path),
@@ -152,6 +158,7 @@ def convert_entry(
         entry_type=entry.entry_type,
         link_target=entry.link_target,
         options=ctx.options,
+        config=ctx.config,
     )
     classification = classify_path(
         entry.source_path,

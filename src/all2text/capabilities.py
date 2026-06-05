@@ -55,6 +55,9 @@ def capability_report(config: object | None) -> dict[str, Any]:
     return {
         "profile": {
             "name": cfg.options.profile,
+            "auto_detect_python": cfg.options.auto_detect_python,
+            "auto_detect_tools": cfg.options.auto_detect_tools,
+            "auto_detect_local_models": cfg.options.auto_detect_local_models,
             "allow_optional_python": cfg.options.allow_optional_python,
             "allow_external_tools": cfg.options.allow_external_tools,
             "allow_local_models": cfg.options.allow_local_models,
@@ -70,10 +73,12 @@ def optional_python_statuses(config: All2TextConfig) -> list[dict[str, Any]]:
     statuses: list[dict[str, Any]] = []
     for item in OPTIONAL_PYTHON_LIBRARIES:
         available = importlib.util.find_spec(str(item["module"])) is not None
-        enabled = bool(config.options.allow_optional_python)
+        enabled = bool(config.options.allow_optional_python and config.options.auto_detect_python)
         error = None
-        if not enabled:
+        if not config.options.allow_optional_python:
             error = f"disabled_by_profile:{config.options.profile}"
+        elif not config.options.auto_detect_python:
+            error = "disabled_by_run.auto_detect_python=false"
         elif not available:
             error = "python_package_not_installed"
         elif not item["implemented_in_core"]:
@@ -95,27 +100,19 @@ def optional_python_statuses(config: All2TextConfig) -> list[dict[str, Any]]:
 def external_tool_statuses(config: All2TextConfig) -> list[dict[str, Any]]:
     statuses: list[dict[str, Any]] = []
     for item in EXTERNAL_TOOLS:
-        name = str(item["name"])
-        executable = str(item["executable"])
-        source = shutil.which(executable)
-        available = bool(source)
-        enabled = tool_enabled(config, name)
-        error = None
-        if not config.options.allow_external_tools:
-            error = f"disabled_by_profile:{config.options.profile}"
-        elif not enabled:
-            error = tool_disabled_reason(config, name)
-        elif not available:
-            error = f"{executable} executable not found"
-        elif not item["used_by_core"]:
+        resolved = resolve_external_tool(config, str(item["name"]))
+        error = resolved["error"]
+        if resolved["enabled"] and resolved["available"] and not item["used_by_core"]:
             error = "external_tool_available_but_no_core_adapter_runs_it"
         statuses.append(
             {
-                "name": name,
-                "executable": executable,
-                "enabled": enabled,
-                "available": available,
-                "source": source,
+                "name": resolved["name"],
+                "executable": resolved["executable"],
+                "enabled": resolved["enabled"],
+                "available": resolved["available"],
+                "source": resolved["source"],
+                "configured_path": resolved["configured_path"],
+                "auto_detected": resolved["auto_detected"],
                 "used_by_core": bool(item["used_by_core"]),
                 "error": error,
             }
@@ -123,8 +120,60 @@ def external_tool_statuses(config: All2TextConfig) -> list[dict[str, Any]]:
     return statuses
 
 
+def resolve_external_tool(config: object | None, name: str) -> dict[str, Any]:
+    cfg = config_for_context(config)
+    configured = cfg.tool(name)
+    executable = configured.executable or name
+    configured_path = configured.path or ""
+    enabled = tool_enabled(cfg, name)
+    source = None
+    auto_detected = False
+    error = None
+    if not cfg.options.allow_external_tools:
+        error = f"disabled_by_profile:{cfg.options.profile}"
+    elif configured.enabled is False:
+        error = f"disabled_by_tools.{name}.enabled=false"
+    elif not cfg.options.auto_detect_tools and not configured_path and configured.enabled is not True:
+        error = "disabled_by_run.auto_detect_tools=false"
+    elif not enabled:
+        error = tool_disabled_reason(cfg, name)
+    else:
+        if configured_path:
+            source = configured_path if shutil.which(configured_path) or _path_exists(configured_path) else None
+        elif cfg.options.auto_detect_tools or configured.enabled is True:
+            source = shutil.which(executable)
+            auto_detected = bool(source)
+        if not source:
+            error = f"{configured_path or executable} executable not found"
+    return {
+        "name": name,
+        "executable": executable,
+        "enabled": enabled,
+        "available": bool(source),
+        "source": source,
+        "configured_path": configured_path or None,
+        "auto_detected": auto_detected,
+        "error": error,
+        "timeout_seconds": configured.params.get("timeout_seconds"),
+    }
+
+
+def _path_exists(path: str) -> bool:
+    try:
+        from pathlib import Path
+
+        return Path(path).exists()
+    except Exception:
+        return False
+
+
 def tool_enabled(config: All2TextConfig, name: str) -> bool:
     if not config.options.allow_external_tools:
+        return False
+    tool = config.tool(name)
+    if tool.enabled is False:
+        return False
+    if not config.options.auto_detect_tools and not tool.path and tool.enabled is not True:
         return False
     if name == "file":
         return bool(config.options.use_file_command)
@@ -167,6 +216,9 @@ def capability_summary(
     ]
     return {
         "profile": config.options.profile,
+        "auto_detect_python": config.options.auto_detect_python,
+        "auto_detect_tools": config.options.auto_detect_tools,
+        "auto_detect_local_models": config.options.auto_detect_local_models,
         "available_optional_python_libraries": sorted(
             item["name"] for item in enabled_python if item["available"]
         ),

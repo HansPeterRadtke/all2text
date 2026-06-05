@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from all2text.capabilities import resolve_external_tool
 from all2text.models import RunOptions
 from all2text.utils import (
     file_size,
@@ -29,6 +30,7 @@ def collect_metadata(
     entry_type: str,
     link_target: str | None,
     options: RunOptions,
+    config: object | None = None,
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {
         "path": str(path),
@@ -59,7 +61,7 @@ def collect_metadata(
     metadata["python_mimetype"] = python_mime
     metadata["python_encoding"] = python_encoding
 
-    file_mime, file_description, file_warnings = file_command_metadata(path, options)
+    file_mime, file_description, file_warnings = file_command_metadata(path, options, config)
     metadata["file_mime_type"] = file_mime
     metadata["file_description"] = file_description
     warnings.extend(file_warnings)
@@ -68,7 +70,7 @@ def collect_metadata(
     metadata["xattrs"] = xattrs
     warnings.extend(xattr_warnings)
 
-    acl, acl_warnings = acl_summary(path, options)
+    acl, acl_warnings = acl_summary(path, options, config)
     metadata["acl_summary"] = acl
     warnings.extend(acl_warnings)
 
@@ -161,12 +163,20 @@ def symlink_metadata(path: Path, link_target: str | None) -> dict[str, Any]:
     return result
 
 
-def file_command_metadata(path: Path, options: RunOptions) -> tuple[str | None, str | None, list[str]]:
+def file_command_metadata(
+    path: Path,
+    options: RunOptions,
+    config: object | None = None,
+) -> tuple[str | None, str | None, list[str]]:
     if not options.use_file_command:
         return None, None, ["file_command_disabled"]
-    file_cmd = shutil.which("file")
+    tool = resolve_external_tool(config, "file")
+    file_cmd = tool["source"]
+    if not tool["enabled"]:
+        return None, None, [str(tool["error"] or "file_command_disabled")]
     if not file_cmd:
-        return None, None, ["file_command_unavailable"]
+        return None, None, [str(tool["error"] or "file_command_unavailable")]
+    timeout = int(tool.get("timeout_seconds") or 5)
     warnings: list[str] = []
     values: list[str | None] = []
     for args in (["--brief", "--mime-type", "--"], ["--brief", "--"]):
@@ -176,7 +186,7 @@ def file_command_metadata(path: Path, options: RunOptions) -> tuple[str | None, 
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=5,
+                timeout=timeout,
             )
             if completed.returncode == 0:
                 values.append(completed.stdout.strip() or None)
@@ -220,21 +230,25 @@ def xattrs_metadata(path: Path) -> tuple[dict[str, Any], list[str]]:
     return {"available": True, "items": items}, warnings
 
 
-def acl_summary(path: Path, options: RunOptions) -> tuple[dict[str, Any], list[str]]:
-    if not options.allow_external_tools:
+def acl_summary(path: Path, options: RunOptions, config: object | None = None) -> tuple[dict[str, Any], list[str]]:
+    tool = resolve_external_tool(config, "getfacl")
+    getfacl = tool["source"]
+    if not tool["enabled"]:
         return {"available": False, "enabled": False, "summary": None}, [
-            f"acl_summary_disabled_by_profile:{options.profile}"
+            str(tool["error"] or f"acl_summary_disabled_by_profile:{options.profile}")
         ]
-    getfacl = shutil.which("getfacl")
     if platform.system() != "Linux" or not getfacl:
-        return {"available": False, "enabled": True, "summary": None}, ["acl_summary_unavailable"]
+        return {"available": False, "enabled": True, "summary": None}, [
+            str(tool["error"] or "acl_summary_unavailable")
+        ]
+    timeout = int(tool.get("timeout_seconds") or 5)
     try:
         completed = subprocess.run(
             [getfacl, "-cp", "--", str(path)],
             check=False,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=timeout,
         )
     except Exception as exc:
         return {"available": True, "enabled": True, "summary": None}, [f"acl_summary_failed:{exc}"]

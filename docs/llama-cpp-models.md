@@ -136,9 +136,11 @@ external runtime log so extraction manifests can be traced to a model/server con
 
 ## all2text Integration Contract
 
-Future llama.cpp-backed all2text providers should be optional backends. They should:
+llama.cpp-backed all2text providers are optional local-model routes. The default config probes the
+Jetson text and vision endpoints shown above, plus a few common local OpenAI-compatible ports, with
+short `/v1/models` requests. Provider implementations should:
 
-- require explicit configuration of base URL, model name/path, timeout, and prompt policy;
+- respect configured base URL, model name/path, timeout, prompt policy, and `auto_detect`;
 - record whether a request was attempted, succeeded, skipped, or failed;
 - set `llm_used` or `vlm_used` only when a provider actually returned accepted content;
 - preserve source evidence and avoid hallucinated claims;
@@ -166,8 +168,9 @@ auto_invoke = false
 mmproj = "mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf"
 ```
 
-`auto_invoke = false` records provider availability and route metadata without making local model
-calls. Set it to `true` only for conversion runs where the corresponding server is already running.
+`auto_invoke = false` records provider availability and route metadata without sending source files
+to local model calls. Set it to `true` only for conversion runs where the corresponding server is
+already running and should receive file-derived prompts/images.
 
 ## References
 

@@ -16,6 +16,7 @@ def build_summary(
     *,
     options: RunOptions | None = None,
     capabilities: dict[str, Any] | None = None,
+    provider_statuses: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     text_records = [record for record in records if record.get("entry_type") != "directory"]
     category_counts: dict[str, int] = {}
@@ -37,6 +38,9 @@ def build_summary(
     summary = {
         "scan_first": True,
         "profile": options.profile if options else capability_summary.get("profile"),
+        "auto_detect_python": options.auto_detect_python if options else None,
+        "auto_detect_tools": options.auto_detect_tools if options else None,
+        "auto_detect_local_models": options.auto_detect_local_models if options else None,
         "allow_optional_python": options.allow_optional_python if options else None,
         "allow_external_tools": options.allow_external_tools if options else None,
         "allow_local_models": options.allow_local_models if options else None,
@@ -59,6 +63,22 @@ def build_summary(
     }
     if capability_summary:
         summary["capability_summary"] = capability_summary
+    if provider_statuses is not None:
+        summary["provider_summary"] = {
+            "available": sorted(
+                str(status.get("name"))
+                for status in provider_statuses
+                if status.get("enabled") and status.get("available")
+            ),
+            "missing_or_unavailable": sorted(
+                str(status.get("name"))
+                for status in provider_statuses
+                if status.get("enabled") and not status.get("available")
+            ),
+            "disabled": sorted(
+                str(status.get("name")) for status in provider_statuses if not status.get("enabled")
+            ),
+        }
     return summary
 
 
@@ -112,6 +132,9 @@ def render_report(manifest: dict[str, Any]) -> str:
         "",
         "Summary:",
         f"- profile: {summary.get('profile')}",
+        f"- auto_detect_python: {summary.get('auto_detect_python')}",
+        f"- auto_detect_tools: {summary.get('auto_detect_tools')}",
+        f"- auto_detect_local_models: {summary.get('auto_detect_local_models')}",
         f"- allow_optional_python: {summary.get('allow_optional_python')}",
         f"- allow_external_tools: {summary.get('allow_external_tools')}",
         f"- allow_local_models: {summary.get('allow_local_models')}",
@@ -143,6 +166,8 @@ def render_report(manifest: dict[str, Any]) -> str:
             "disabled_by_profile",
         ):
             lines.append(f"- {key}: {cap_summary.get(key, [])}")
+        if summary.get("provider_summary"):
+            lines.append(f"- provider_summary: {summary.get('provider_summary')}")
         lines.extend(["", "External tools:"])
         for item in manifest["capabilities"].get("external_tools", []):
             lines.append(

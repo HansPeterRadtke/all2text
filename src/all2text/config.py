@@ -26,10 +26,20 @@ class ProviderConfig:
 
 
 @dataclass
+class ToolConfig:
+    name: str
+    enabled: bool | None = None
+    path: str = ""
+    executable: str = ""
+    params: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class All2TextConfig:
     options: RunOptions = field(default_factory=RunOptions)
     modules: dict[str, ModuleConfig] = field(default_factory=dict)
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
+    tools: dict[str, ToolConfig] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
     source_path: str | None = None
 
@@ -51,6 +61,9 @@ class All2TextConfig:
     def provider(self, task: str) -> ProviderConfig:
         return self.providers.get(task, ProviderConfig())
 
+    def tool(self, name: str) -> ToolConfig:
+        return self.tools.get(name, ToolConfig(name=name))
+
     def with_options(self, options: RunOptions) -> "All2TextConfig":
         return replace(self, options=options)
 
@@ -60,6 +73,7 @@ class All2TextConfig:
             "options": asdict(self.options),
             "modules": {key: asdict(value) for key, value in sorted(self.modules.items())},
             "providers": {key: asdict(value) for key, value in sorted(self.providers.items())},
+            "tools": {key: asdict(value) for key, value in sorted(self.tools.items())},
         }
 
 
@@ -107,31 +121,55 @@ DEFAULT_MODULE_PARAMS: dict[str, dict[str, Any]] = {
 }
 
 PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "auto": {
+        "auto_detect_python": True,
+        "auto_detect_tools": True,
+        "auto_detect_local_models": True,
+        "allow_optional_python": True,
+        "allow_external_tools": True,
+        "allow_local_models": True,
+        "use_file_command": True,
+    },
     "core": {
+        "auto_detect_python": False,
+        "auto_detect_tools": False,
+        "auto_detect_local_models": False,
         "allow_optional_python": False,
         "allow_external_tools": False,
         "allow_local_models": False,
         "use_file_command": False,
     },
     "pip": {
+        "auto_detect_python": True,
+        "auto_detect_tools": False,
+        "auto_detect_local_models": False,
         "allow_optional_python": True,
         "allow_external_tools": False,
         "allow_local_models": False,
         "use_file_command": False,
     },
     "tools": {
+        "auto_detect_python": True,
+        "auto_detect_tools": True,
+        "auto_detect_local_models": False,
         "allow_optional_python": True,
         "allow_external_tools": True,
         "allow_local_models": False,
         "use_file_command": True,
     },
     "local-models": {
+        "auto_detect_python": True,
+        "auto_detect_tools": False,
+        "auto_detect_local_models": True,
         "allow_optional_python": True,
         "allow_external_tools": False,
         "allow_local_models": True,
         "use_file_command": False,
     },
     "full": {
+        "auto_detect_python": True,
+        "auto_detect_tools": True,
+        "auto_detect_local_models": True,
         "allow_optional_python": True,
         "allow_external_tools": True,
         "allow_local_models": True,
@@ -140,9 +178,11 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 
 PROFILE_ALIASES = {
-    "base": "pip",
-    "lowest": "pip",
-    "lowest-detail": "pip",
+    "base": "auto",
+    "default": "auto",
+    "automatic": "auto",
+    "lowest": "auto",
+    "lowest-detail": "auto",
     "python": "pip",
     "python-only": "pip",
     "local_models": "local-models",
@@ -197,6 +237,9 @@ RUN_OPTION_POSITIVE_INT_FIELDS = {
 }
 
 RUN_OPTION_BOOL_FIELDS = {
+    "auto_detect_local_models",
+    "auto_detect_python",
+    "auto_detect_tools",
     "allow_external_tools",
     "allow_local_models",
     "allow_optional_python",
@@ -204,6 +247,19 @@ RUN_OPTION_BOOL_FIELDS = {
     "copy_source_stat",
     "reject_target_inside_source",
 }
+
+KNOWN_TOOL_NAMES = {
+    "ffmpeg",
+    "ffprobe",
+    "file",
+    "getfacl",
+    "libreoffice",
+    "tesseract",
+}
+
+TOOL_BOOL_PARAMS = {"enabled"}
+
+TOOL_POSITIVE_INT_PARAMS = {"timeout_seconds"}
 
 MODULE_NON_NEGATIVE_INT_PARAMS = {
     "max_ffprobe_json_chars",
@@ -226,6 +282,8 @@ PROVIDER_POSITIVE_INT_PARAMS: dict[str, set[str]] = {
 }
 
 PROVIDER_POSITIVE_FLOAT_PARAMS: dict[str, set[str]] = {
+    "vlm": {"discovery_timeout_seconds"},
+    "llm_text": {"discovery_timeout_seconds"},
     "video_frames": {"interval_seconds"},
 }
 
@@ -240,8 +298,8 @@ PROVIDER_PERCENT_PARAMS: dict[str, set[str]] = {
 
 PROVIDER_BOOL_PARAMS: dict[str, set[str]] = {
     "ocr": {"auto_invoke"},
-    "vlm": {"auto_invoke"},
-    "llm_text": {"auto_invoke"},
+    "vlm": {"auto_detect", "auto_invoke"},
+    "llm_text": {"auto_detect", "auto_invoke"},
     "chart": {"embedded_images_enabled"},
     "document_intelligence": {"auto_invoke"},
     "speech": {"transcribe", "translate", "language_detection", "auto_invoke"},
@@ -251,8 +309,8 @@ PROVIDER_BOOL_PARAMS: dict[str, set[str]] = {
 
 DEFAULT_PROVIDERS: dict[str, ProviderConfig] = {
     "ocr": ProviderConfig(
-        name="none",
-        enabled=False,
+        name="tesseract",
+        enabled=True,
         params={
             "language": "eng",
             "timeout_seconds": 30,
@@ -260,32 +318,36 @@ DEFAULT_PROVIDERS: dict[str, ProviderConfig] = {
             "min_characters": 4,
             "min_alnum_ratio": 0.35,
             "min_confidence": 35,
-            "auto_invoke": False,
+            "auto_invoke": True,
         },
     ),
     "vlm": ProviderConfig(
         name="openai_compatible",
-        enabled=False,
+        enabled=True,
         params={
             "base_url": "http://127.0.0.1:14830/v1",
             "model": "Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf",
             "timeout_seconds": 120,
+            "discovery_timeout_seconds": 0.5,
             "max_tokens": 300,
             "temperature": 0,
             "prompt": "Describe visible evidence only.",
+            "auto_detect": True,
             "auto_invoke": False,
         },
     ),
     "llm_text": ProviderConfig(
         name="openai_compatible",
-        enabled=False,
+        enabled=True,
         params={
             "base_url": "http://127.0.0.1:14829/v1",
             "model": "Qwen2.5-14B-Instruct-Q4_K_M.gguf",
             "timeout_seconds": 120,
+            "discovery_timeout_seconds": 0.5,
             "max_tokens": 512,
             "temperature": 0,
             "prompt": "Summarize extracted text using only supplied evidence.",
+            "auto_detect": True,
             "auto_invoke": False,
         },
     ),
@@ -338,6 +400,11 @@ DEFAULT_PROVIDERS: dict[str, ProviderConfig] = {
     ),
 }
 
+DEFAULT_TOOLS: dict[str, ToolConfig] = {
+    name: ToolConfig(name=name, executable=name)
+    for name in sorted(KNOWN_TOOL_NAMES)
+}
+
 
 def default_config() -> All2TextConfig:
     return All2TextConfig(
@@ -348,6 +415,10 @@ def default_config() -> All2TextConfig:
         providers={
             key: ProviderConfig(value.name, value.enabled, dict(value.params))
             for key, value in DEFAULT_PROVIDERS.items()
+        },
+        tools={
+            key: ToolConfig(value.name, value.enabled, value.path, value.executable, dict(value.params))
+            for key, value in DEFAULT_TOOLS.items()
         },
     )
 
@@ -409,10 +480,41 @@ def config_from_dict(data: dict[str, Any], *, source_path: str | None = None) ->
         params = dict(current.params)
         params.update({str(k): v for k, v in value.items() if k not in {"name", "enabled"}})
         providers[str(key)] = ProviderConfig(name=name, enabled=enabled, params=params)
+    tools = dict(base.tools)
+    tool_data = data.get("tools", {})
+    if tool_data is None:
+        tool_data = {}
+    if not isinstance(tool_data, dict):
+        raise ValueError(_config_error("tools must be a table", source_path))
+    for key, value in tool_data.items():
+        name = str(key)
+        current = tools.get(name, ToolConfig(name=name, executable=name))
+        if isinstance(value, str):
+            tools[name] = ToolConfig(name=name, path=value, executable=current.executable)
+        elif isinstance(value, dict):
+            enabled = (
+                _coerce_bool(value["enabled"], f"tools.{name}.enabled", source_path=source_path)
+                if "enabled" in value
+                else current.enabled
+            )
+            path = str(value.get("path", current.path) or "")
+            executable = str(value.get("executable", current.executable or name) or name)
+            params = dict(current.params)
+            params.update({str(k): v for k, v in value.items() if k not in {"enabled", "path", "executable"}})
+            tools[name] = ToolConfig(
+                name=name,
+                enabled=enabled,
+                path=path,
+                executable=executable,
+                params=params,
+            )
+        else:
+            raise ValueError(_config_error(f"tools.{name} must be a path string or table", source_path))
     config = All2TextConfig(
         options=run_options,
         modules=modules,
         providers=providers,
+        tools=tools,
         raw=data,
         source_path=source_path,
     )
@@ -429,7 +531,7 @@ def _run_options_from_dict(
     if not isinstance(data, dict):
         raise ValueError(_config_error("run must be a table", source_path))
     values = asdict(defaults)
-    profile = normalize_profile(data.get("profile", values.get("profile", "pip")), source_path=source_path)
+    profile = normalize_profile(data.get("profile", values.get("profile", "auto")), source_path=source_path)
     values.update(PROFILE_DEFAULTS[profile])
     values["profile"] = profile
     for key in values:
@@ -452,7 +554,7 @@ def _run_options_from_dict(
 
 
 def normalize_profile(value: Any, *, source_path: str | None = None) -> str:
-    profile = str(value or "pip").strip().casefold().replace("_", "-")
+    profile = str(value or "auto").strip().casefold().replace("_", "-")
     profile = PROFILE_ALIASES.get(profile, profile)
     if profile not in PROFILE_DEFAULTS:
         allowed = ", ".join(sorted(PROFILE_DEFAULTS))
@@ -515,6 +617,26 @@ def validate_config(config: All2TextConfig) -> None:
                     module.params[key],
                     f"modules.{family}.{key}",
                     source_path=config.source_path,
+                )
+    for name, tool in config.tools.items():
+        if name not in KNOWN_TOOL_NAMES:
+            allowed = ", ".join(sorted(KNOWN_TOOL_NAMES))
+            raise ValueError(
+                _config_error(f"unknown tool tools.{name}; expected one of: {allowed}", config.source_path)
+            )
+        if tool.enabled is not None:
+            tool.enabled = _coerce_bool(
+                tool.enabled,
+                f"tools.{name}.enabled",
+                source_path=config.source_path,
+            )
+        for key in TOOL_POSITIVE_INT_PARAMS:
+            if key in tool.params:
+                tool.params[key] = _coerce_int(
+                    tool.params[key],
+                    f"tools.{name}.{key}",
+                    source_path=config.source_path,
+                    minimum=1,
                 )
     for task, provider in config.providers.items():
         allowed_names = ALLOWED_PROVIDER_NAMES.get(task)

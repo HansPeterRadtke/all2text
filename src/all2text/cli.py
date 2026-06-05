@@ -5,8 +5,10 @@ from dataclasses import replace
 from pathlib import Path
 
 from all2text.api import run
+from all2text.capabilities import capability_report
 from all2text.config import PROFILE_DEFAULTS, load_config, options_with_profile
 from all2text.jsonsafe import json_dumps
+from all2text.providers import provider_statuses
 from all2text.version import __version__
 
 
@@ -23,9 +25,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--profile",
         choices=sorted(PROFILE_DEFAULTS),
         help=(
-            "Execution profile: core=stdlib only, pip=Python/PyPI only, tools=allow external "
-            "shell tools, local-models=allow configured model endpoints, full=tools plus models."
+            "Advanced safety override. Default auto detects installed Python libraries, safe "
+            "external tools, and configured/reachable local model endpoints."
         ),
+    )
+    parser.add_argument(
+        "--capabilities",
+        "--detect-capabilities",
+        action="store_true",
+        help="Print automatic capability detection JSON and exit without converting files.",
     )
     parser.add_argument("--no-file-command", action="store_true", help="Disable the optional system file(1) probe.")
     parser.add_argument("--no-copy-source-stat", action="store_true", help="Do not copy basic source file stat metadata to outputs.")
@@ -44,8 +52,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.version:
         print(__version__)
         return 0
-    if not args.source_folder or not args.target_folder:
-        parser.error("source_folder and target_folder are required unless --version is used")
     config = load_config(args.config)
     options = config.options
     if args.profile:
@@ -61,6 +67,13 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--max-archive-members must be a positive integer")
         options = replace(options, max_archive_members=args.max_archive_members)
     config = config.with_options(options)
+    if args.capabilities:
+        report = capability_report(config)
+        report["provider_statuses"] = [status.to_dict() for status in provider_statuses(config)]
+        print(json_dumps(report, indent=2))
+        return 0
+    if not args.source_folder or not args.target_folder:
+        parser.error("source_folder and target_folder are required unless --version or --capabilities is used")
     manifest = run(Path(args.source_folder), Path(args.target_folder), options=options, config=config)
     print(json_dumps(manifest["summary"], indent=2))
     return 0

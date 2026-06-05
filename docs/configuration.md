@@ -1,9 +1,10 @@
 # Configuration
 
-`all2text` accepts a TOML config file with two main sections:
+`all2text` accepts a TOML config file with these main sections:
 
-- `[run]` chooses the execution profile and global safety/resource options.
+- `[run]` controls automatic discovery, safety gates, and resource limits.
 - `[modules]` chooses a backend by file family or format key.
+- `[tools.<name>]` overrides external executable discovery.
 - `[providers.<task>]` configures optional engines used by those backends.
 
 Start with [`../all2text.default.toml`](../all2text.default.toml):
@@ -21,23 +22,43 @@ config = load_config("/path/to/all2text.toml")
 manifest = run("source", "out", config=config)
 ```
 
-## Execution Profiles
+## Automatic Discovery
 
-The default profile is `pip`, the lowest-detail/base profile intended for normal installs. It uses
-deterministic Python and installed PyPI packages, but it does not require shell tools, model servers,
-or model downloads.
+The default profile is `auto`. A normal run needs no config: all2text uses deterministic core
+extractors, imports optional Python/PyPI libraries when installed, detects safe external tools on
+PATH/default configured locations, and probes configured/common local OpenAI-compatible endpoints
+with short `/v1/models` GET requests. Missing optional tools, libraries, and local endpoints are
+reported clearly and do not fail the run.
 
 ```toml
 [run]
-profile = "pip"
+profile = "auto"
+auto_detect_python = true
+auto_detect_tools = true
+auto_detect_local_models = true
+allow_optional_python = true
+allow_external_tools = true
+allow_local_models = true
 ```
 
-Supported profiles:
+Config is mainly for overrides and controls. Explicit config wins over automatic discovery:
+
+- set `auto_detect_python = false` to avoid importing optional PyPI libraries;
+- set `auto_detect_tools = false` to avoid PATH/default executable discovery unless a tool path is
+  explicitly configured;
+- set `auto_detect_local_models = false` to avoid common local endpoint discovery;
+- set `allow_external_tools = false` or `allow_local_models = false` to block those classes entirely;
+- set tool paths, executable names, provider base URLs, models, timeouts, and `auto_invoke`
+  behavior in the relevant sections.
+
+## Advanced Profiles
+
+Profiles remain as safety presets, but the normal UX is not profile-first. Supported profiles:
 
 - `core`: stdlib-only deterministic extraction. Optional PyPI libraries, shell tools, and local
   model providers are disabled by profile.
-- `pip`: default/base mode. Optional Python/PyPI extractors are enabled when installed. External
-  shell tools and local model providers are disabled by profile.
+- `pip`: Python/PyPI-only mode. Optional Python/PyPI extractors are enabled when installed.
+  External shell tools and local model providers are disabled by profile.
 - `tools`: enables optional shell tools such as `file`, `ffprobe`, `ffmpeg`, `getfacl`, and
   Tesseract when configured and available. Local model providers remain disabled.
 - `local-models`: enables configured local/remote-compatible model providers without enabling shell
@@ -45,8 +66,9 @@ Supported profiles:
 - `full`: enables installed Python libraries, configured shell tools, and configured local model
   providers.
 
-Profile aliases `base`, `lowest`, `lowest-detail`, `python`, and `python-only` normalize to `pip`.
-`local_models` normalizes to `local-models`, and `all` normalizes to `full`.
+Profile aliases `base`, `default`, `automatic`, `lowest`, and `lowest-detail` normalize to `auto`.
+`python` and `python-only` normalize to `pip`, `local_models` normalizes to `local-models`, and
+`all` normalizes to `full`.
 
 Explicit run booleans can tighten a profile. For example, `profile = "tools"` with
 `use_file_command = false` still allows ffprobe/getfacl/Tesseract but disables the `file(1)` MIME
@@ -107,8 +129,8 @@ Current native document parameters:
 - `spreadsheet.max_cells_per_sheet`: bounds non-empty XLSX cells emitted per worksheet; default is
   `20000`, and `0` means no per-sheet cell cap.
 - `audio.max_ffprobe_json_chars` and `video.max_ffprobe_json_chars`: bound ffprobe JSON emitted in
-  outputs and manifests when the `tools`/`full` profile permits ffprobe; default is `20000`, and
-  `0` means no ffprobe JSON cap.
+  outputs and manifests when ffprobe is detected and allowed; default is `20000`, and `0` means no
+  ffprobe JSON cap.
 
 When a module limit skips content, the output and manifest record the limit, warning, and limitation.
 Numeric parameters are validated. Negative limits, zero where a positive runtime value is required,
@@ -149,11 +171,46 @@ auto_invoke = false
 ```
 
 `auto_invoke = false` records the provider configuration and route without making a model request.
-Set it to `true` only when the endpoint is running and you want the backend to call it.
+Set it to `true` only when the endpoint is running and you want the backend to call it. Local
+OpenAI-compatible discovery probes the configured base URL and common local defaults, including
+Jetson examples:
+
+```toml
+[providers.llm_text]
+base_url = "http://127.0.0.1:14829/v1"
+auto_detect = true
+auto_invoke = false
+
+[providers.vlm]
+base_url = "http://127.0.0.1:14830/v1"
+auto_detect = true
+auto_invoke = false
+```
+
+Discovery only sends a short GET to `/models`; source files are sent only by provider execution
+paths, and only when the provider is enabled and `auto_invoke = true`.
 Provider task names, provider names, and numeric runtime settings are validated at config load time.
-Providers are also filtered by profile at runtime. Tool-backed providers such as Tesseract OCR and
-ffmpeg frame sampling require `tools` or `full`; model-backed providers such as VLM, text LLM,
-speech, chart specialists, and document intelligence require `local-models` or `full`.
+Providers are also filtered by profile/runtime gates. Tool-backed providers such as Tesseract OCR
+and ffmpeg frame sampling require external tools to be allowed. Model-backed providers such as VLM,
+text LLM, speech, chart specialists, and document intelligence require local models to be allowed.
+
+## Tool Overrides
+
+External tools are detected automatically on PATH when allowed. Use `[tools.<name>]` only to pin a
+path, change an executable name, set a timeout, or disable a tool:
+
+```toml
+[tools.ffprobe]
+path = "/usr/bin/ffprobe"
+timeout_seconds = 15
+
+[tools.file]
+enabled = false
+```
+
+Known tool keys are `file`, `getfacl`, `ffprobe`, `ffmpeg`, `tesseract`, and `libreoffice`.
+Missing tools are reported in the manifest/report/stdout capability summary and do not fail normal
+conversion.
 
 Current core provider behavior:
 
@@ -176,9 +233,9 @@ provider statuses, route plans, and stage blockers.
 
 The top-level manifest also includes `capabilities`, which lists:
 
-- active profile and profile gates;
+- active automatic settings and safety gates;
 - available/missing optional Python libraries;
-- external tool status, including disabled-by-profile and executable-not-found states;
+- external tool status, including configured paths, disabled states, and executable-not-found states;
 - a compact summary copied into stdout and `_conversion_report.txt`.
 
 ## Truthfulness

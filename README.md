@@ -52,9 +52,12 @@ python -m pip install 'all2text[all-pip]'
 
 The `all-pip` extra contains normal PyPI packages only. It does not install external binaries,
 model files, llama.cpp servers, Tesseract itself, ffmpeg/ffprobe, LibreOffice, or system `file`.
-Core `all2text` intentionally keeps heavy dependencies optional. The config loader uses Python
-3.11+ `tomllib`, optional `tomli` on older Python, or a small fallback parser for the simple
-template shipped here. Optional groups enable native extraction paths when installed:
+Core `all2text` intentionally keeps heavy dependencies optional. At runtime it automatically uses
+installed Python packages from these extras, detects safe external tools on PATH/default configured
+locations, and safely probes configured/common local OpenAI-compatible endpoints. Missing optional
+capabilities are reported and are not fatal. The config loader uses Python 3.11+ `tomllib`,
+optional `tomli` on older Python, or a small fallback parser for the simple template shipped here.
+Optional groups enable native extraction paths when installed:
 
 ```bash
 python -m pip install -e '.[documents,images,media,ocr,scientific,cad,geospatial]'
@@ -68,13 +71,15 @@ operation often depends on external converter binaries and older Python dependen
 ```bash
 all2text /path/to/source /path/to/output
 all2text --config /path/to/all2text.toml /path/to/source /path/to/output
-all2text --profile pip /path/to/source /path/to/output
+all2text --capabilities
 ```
 
 Useful options:
 
 ```bash
+all2text --detect-capabilities
 all2text --profile core /path/to/source /path/to/output
+all2text --profile pip /path/to/source /path/to/output
 all2text --profile tools /path/to/source /path/to/output
 all2text --profile local-models /path/to/source /path/to/output
 all2text --profile full /path/to/source /path/to/output
@@ -83,20 +88,26 @@ all2text --max-archive-members 100 /path/to/source /path/to/output
 all2text --version
 ```
 
-Profiles:
+Default behavior is automatic. A normal run uses deterministic core extractors, installed optional
+Python libraries, available safe external tools such as `file`, `ffprobe`, `getfacl`, and
+Tesseract, and reachable/configured local model endpoints when provider `auto_invoke` permits
+actual calls. The built-in local endpoint probes are short `/v1/models` GET requests and include
+Jetson defaults `http://127.0.0.1:14829/v1` for text and `http://127.0.0.1:14830/v1` for vision.
+No model files or external binaries are downloaded or bundled.
+
+Profiles are advanced safety overrides:
 
 - `core`: stdlib-only deterministic extraction; no optional PyPI libraries, shell tools, or models.
-- `pip`: default/base profile; uses installed Python/PyPI extractors and never requires shell tools
-  or local model endpoints.
+- `pip`: Python/PyPI-only extraction; disables shell tools and local model endpoints.
 - `tools`: allows optional shell tools such as `file`, `ffprobe`, `ffmpeg`, `getfacl`, or Tesseract
   when configured and present.
 - `local-models`: allows configured local/remote-compatible model endpoints without enabling shell
   tools.
 - `full`: enables all configured Python, tool, and model routes that are available.
 
-The CLI prints a JSON summary that includes the active profile, capability summary, missing optional
-Python libraries, disabled-by-profile tools/providers, and normal conversion counts. The manifest
-and report include the full capability table.
+The CLI prints a JSON summary that includes the active automatic settings, capability summary,
+missing optional Python libraries/tools, provider summary, and normal conversion counts. The
+manifest and report include full capability and provider tables.
 
 The command prints the manifest summary as JSON and writes:
 
@@ -169,8 +180,8 @@ Native core extraction:
 - EML/MBOX files are parsed with Python's standard email package, including headers, plain text
   body, attachment metadata, and original message source preservation;
 - SQLite files are opened read-only when possible to list schema objects;
-- audio/video can include Python-only `mutagen` metadata in the `pip` profile when installed;
-  ffprobe remains an external-tool route used only by `tools`/`full`.
+- audio/video can include Python-only `mutagen` metadata when installed; `ffprobe` metadata is used
+  automatically when the executable is available and allowed.
 
 Safe placeholder coverage:
 

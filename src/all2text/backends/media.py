@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from all2text.capabilities import resolve_external_tool
 from all2text.config import config_for_context, effective_provider
 from all2text.models import Classification, ConversionContext, ConversionResult
 from all2text.providers import provider_statuses
@@ -26,15 +27,25 @@ class MediaAnalysisBackend:
         ctx: ConversionContext,
     ) -> ConversionResult:
         cfg = config_for_context(ctx.config)
-        if ctx.options.allow_external_tools:
-            ffprobe_metadata, warnings = ffprobe(path)
+        ffprobe_tool = resolve_external_tool(cfg, "ffprobe")
+        if ffprobe_tool["enabled"] and ffprobe_tool["available"]:
+            ffprobe_metadata, warnings = ffprobe(
+                path,
+                executable=str(ffprobe_tool["source"]),
+                timeout_seconds=int(ffprobe_tool.get("timeout_seconds") or 15),
+            )
         else:
             ffprobe_metadata = None
-            warnings = [f"ffprobe_disabled_by_profile:{ctx.options.profile}"]
+            warnings = [str(ffprobe_tool["error"] or "ffprobe_unavailable")]
         python_metadata, python_warnings = python_media_metadata(
             path,
-            allow_optional_python=ctx.options.allow_optional_python,
+            allow_optional_python=ctx.options.allow_optional_python and ctx.options.auto_detect_python,
             profile=ctx.options.profile,
+            disabled_reason=(
+                f"disabled_by_profile:{ctx.options.profile}"
+                if not ctx.options.allow_optional_python
+                else "disabled_by_run.auto_detect_python=false"
+            ),
         )
         warnings.extend(python_warnings)
         family = classification.rough_category
@@ -92,8 +103,13 @@ class MediaAnalysisBackend:
 MediaPlaceholderBackend = MediaAnalysisBackend
 
 
-def ffprobe(path: Path) -> tuple[dict[str, object] | None, list[str]]:
-    ffprobe_bin = shutil.which("ffprobe")
+def ffprobe(
+    path: Path,
+    *,
+    executable: str | None = None,
+    timeout_seconds: int = 15,
+) -> tuple[dict[str, object] | None, list[str]]:
+    ffprobe_bin = executable or shutil.which("ffprobe")
     if not ffprobe_bin:
         return None, ["ffprobe_unavailable"]
     try:
@@ -112,7 +128,7 @@ def ffprobe(path: Path) -> tuple[dict[str, object] | None, list[str]]:
             check=False,
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=timeout_seconds,
         )
     except Exception as exc:
         return None, [f"ffprobe_error:{exc}"]
@@ -129,9 +145,11 @@ def python_media_metadata(
     *,
     allow_optional_python: bool,
     profile: str,
+    disabled_reason: str = "",
 ) -> tuple[dict[str, object] | None, list[str]]:
     if not allow_optional_python:
-        return None, [f"mutagen_metadata_disabled_by_profile:{profile}"]
+        reason = disabled_reason or f"disabled_by_profile:{profile}"
+        return None, [f"mutagen_metadata_disabled:{reason}"]
     try:
         import mutagen
     except Exception as exc:

@@ -318,7 +318,12 @@ def test_media_ffprobe_limit_records_warning_without_running_real_ffprobe(
     source.mkdir()
     (source / "clip.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42")
 
-    def fake_ffprobe(path: Path) -> tuple[dict[str, object], list[str]]:
+    def fake_ffprobe(
+        path: Path,
+        *,
+        executable: str | None = None,
+        timeout_seconds: int = 15,
+    ) -> tuple[dict[str, object], list[str]]:
         return ({"streams": [{"codec_type": "video", "long_tag": "x" * 200}]}, [])
 
     monkeypatch.setattr("all2text.backends.media.ffprobe", fake_ffprobe)
