@@ -294,3 +294,46 @@ def test_manifest_module_statuses_show_configured_but_not_run_routes(tmp_path: P
     assert statuses["text"]["status"] == "used"
     assert statuses["image"]["status"] == "configured_not_run_no_matching_entries"
     assert statuses["image"]["backend"] == "image_analysis_backend"
+
+
+def test_python_module_invocation_displays_version() -> None:
+    import os
+    import subprocess
+    import sys
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = "src"
+    completed = subprocess.run(
+        [sys.executable, "-m", "all2text", "--version"],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout.strip()
+
+
+def test_python_module_invocation_can_print_capabilities() -> None:
+    import os
+    import subprocess
+    import sys
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = "src"
+    completed = subprocess.run(
+        [sys.executable, "-m", "all2text", "--capabilities"],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert '"profile"' in completed.stdout
+    assert '"provider_statuses"' in completed.stdout

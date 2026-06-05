@@ -55,3 +55,11 @@ The test suite covers:
 
 Generated conversion outputs, caches, logs, temporary model files, and local runtime artifacts should
 not be committed. Runtime experiments belong under `/data/var`, not under the repository.
+
+
+Module invocation smoke check:
+
+```bash
+PYTHONPATH=src python -m all2text --version
+PYTHONPATH=src python -m all2text --capabilities
+```

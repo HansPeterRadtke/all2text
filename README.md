@@ -70,7 +70,9 @@ operation often depends on external converter binaries and older Python dependen
 
 ```bash
 all2text /path/to/source /path/to/output
+python -m all2text /path/to/source /path/to/output
 all2text --config /path/to/all2text.toml /path/to/source /path/to/output
+python -m all2text --capabilities
 all2text --capabilities
 ```
 
@@ -108,6 +110,8 @@ Profiles are advanced safety overrides:
 The CLI prints a JSON summary that includes the active automatic settings, capability summary,
 missing optional Python libraries/tools, provider summary, and normal conversion counts. The
 manifest and report include full capability and provider tables.
+
+The installed console command and module invocation are equivalent: `all2text ...` and `python -m all2text ...` both call the same CLI entry point.
 
 The command prints the manifest summary as JSON and writes:
 

@@ -34,6 +34,7 @@ python -m pip install -e '.[documents,images,media,ocr,scientific,cad,geospatial
 ## CLI
 
 ```bash
+python -m all2text /path/to/source /path/to/output
 all2text SOURCE_FOLDER TARGET_FOLDER
 all2text --config all2text.default.toml SOURCE_FOLDER TARGET_FOLDER
 all2text --capabilities
@@ -154,3 +155,6 @@ fallbacks when building a custom registry.
 The returned manifest is already JSON-safe. It has the same structure as
 `_conversion_manifest.json`, including source metadata, classification, converter name,
 `converter_metadata`, warnings/errors, limitations, and output paths for each source entry.
+
+
+`python -m all2text ...` and `all2text ...` are equivalent entry points. Both call `all2text.cli:main`.
