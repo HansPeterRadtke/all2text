@@ -111,3 +111,77 @@ Verification:
 - `pytest -q`: passed, 43 tests and 6 skipped, with the existing pytest warning about `pythonpath`.
 - `git diff --check`: passed.
 - `python -m ruff check .`: not run; `ruff` is not installed in `/data/venv`.
+
+## 2026-06-06 Jetson provider implementation session
+
+Context:
+
+- Worktree: `/data/src/github/all2text`
+- Read-only reference only: `/data/src/github/devtests/rag_tests`
+- No edits made to devtests, KnowMoreDiRT, model files, runtime caches, unrelated repos, or unrelated logs.
+- Startup environment: `hans@jetson`, `pwd=/data/src/github/all2text`, Python 3.8.10 in the active `/data` environment.
+- Visible model/reasoning settings were not exposed by the shell environment; the supervisor/user launch context stated `gpt-5.5` with `xhigh` reasoning.
+- Baseline head: `df793f7 Expand research roadmap with ranked provider candidates`.
+- Implementation checkpoint: `4a53b43 Implement provider catalog and schema probes`.
+
+Read-only startup checks:
+
+- `git status --short`: clean at baseline.
+- Recent commits showed the normal install/module-entry-point sequence through `df793f7`.
+- `all2text` was not initially installed as a command in the active shell, but `PYTHONPATH=src python -m all2text doctor` worked.
+- External tools detected on Jetson: `ffmpeg`, `ffprobe`, `tesseract`, `file`, `getfacl`, and `libreoffice`.
+- Local text endpoint `http://127.0.0.1:14829/v1` was reachable with `Qwen2.5-14B-Instruct-Q4_K_M.gguf`; the common local vision endpoint on `14830` was not reachable.
+
+Installation findings:
+
+- Installed or confirmed safe optional Python packages from normal pip/wheels: `ebooklib`, `odfpy`, `mutagen`, `piexif`, `rarfile`, `xlrd`, `pyshp`, `pyproj`, `pefile`, `ezdxf`, `netCDF4`, `astropy`, `pyarrow`, `h5netcdf`, `h5py`, `filetype`, `python-magic`, `py7zr`, `macholib`, `lief`, and `faster-whisper`.
+- Did not install huge or gated model weights. No model files or runtime caches were placed in the repo.
+- Did not install `torchaudio`; the active environment already has a Jetson/NVIDIA Torch stack, and replacing it blindly would be unsafe.
+- Blockers documented: `docling` had no compatible distribution in the active index/runtime; `paddleocr` resolved only through a large OpenCV/Paddle stack and still needed external PaddleOCR-VL model files; `pyannote.audio` resolver backtracking hit unavailable GPU/torchaudio-era dependencies; `whisper.cpp`, `radare2`, and `capa` executables were not present.
+
+Mechanisms implemented:
+
+- Added a provider-family catalog and typed status surface for document OCR/layout, OCR, image routing, VLM, chart, audio classification, ASR, diarization, video, CAD/BIM, scientific/geospatial, and binary metadata providers.
+- Added lifecycle/evidence flags: `configured`, `auto_detected`, `dependency_found`, `executable_found`, `endpoint_reachable`, `attempted`, `used`, `skipped`, `failed`, `disabled`, `missing`, and `error`.
+- Extended `all2text --capabilities`, manifests, and text reports with `provider_family_statuses`.
+- Added deterministic image structure profiling and a broader taxonomy: photo, screenshot/UI, document page, table screenshot, chart/plot, diagram/flowchart/UML/network, circuit schematic, mechanical technical drawing, architectural floor plan, map/plan/heatmap, scientific/medical image, painting/illustration/art, abstract/texture, logo/icon, and unknown.
+- Added a chart schema that reports route/status/evidence and explicitly does not invent titles, axes, series, tables, or values.
+- Added audio route planning for metadata, kind classification, ASR/language/translation, and diarization without fake transcription or speaker labels.
+- Added bounded schema probes for installed libraries: NumPy NPY/NPZ, h5py HDF5, netCDF4, astropy FITS, pyarrow Parquet, scipy MAT, ezdxf DXF, IfcOpenShell IFC when available, pyshp Shapefile, SQLite GeoPackage, ELF headers, pefile PE, and macholib Mach-O.
+- Kept binaries non-executable: no binary execution, disassembly, decompilation, unpacking, geometry rendering, feature dump, coordinate transform, or large array dump.
+- Tightened configured ASR status so an installed package such as `faster-whisper` is not reported usable unless a local model reference is configured.
+
+Capability snapshot after install:
+
+- Installed `all2text --capabilities` reported `profile=auto`, 14 configured `provider_statuses`, and 53 `provider_family_statuses`.
+- Available family providers were: `astropy`, `deterministic_chart_geometry`, `deterministic_image_profile`, `ezdxf`, `ffprobe`, `file`, `h5py`, `netcdf4`, `numpy`, `opencv`, `pefile`, `pyarrow`, `pyshp`, `scipy`, and `tesseract`.
+- Missing or unavailable family providers numbered 38 and included the expected heavy/model-backed or absent-tool routes.
+- Default configured speech status remained disabled by config. A configured `faster_whisper` provider without `model_path` is now unavailable with an explicit no-model-download blocker.
+
+Validation:
+
+- `PYTHONPYCACHEPREFIX=/data/tmp/all2text_pycache python -m py_compile src/all2text/providers.py tests/test_provider_contracts_and_routes.py`: passed.
+- `PYTHONPATH=src PYTHONPYCACHEPREFIX=/data/tmp/all2text_pycache pytest -q tests/test_provider_contracts_and_routes.py`: passed, 7 tests.
+- `PYTHONPYCACHEPREFIX=/data/tmp/all2text_pycache python -m compileall -q src tests`: passed.
+- `PYTHONPATH=src PYTHONPYCACHEPREFIX=/data/tmp/all2text_pycache pytest -q`: passed, 90 passed and 6 skipped across 96 collected tests, with the pre-existing `pythonpath` pytest warning.
+- `python -m pip install .`: passed and installed `all2text-0.1.0` through the normal wheel path.
+- Installed CLI smoke: `all2text --capabilities` parsed successfully; a one-file conversion under `/data/tmp/all2text_smoke_src` completed with one text file converted.
+- `git diff --check`: passed before the implementation commit.
+- Ruff was not run because `python -m ruff --version` reported `No module named ruff`.
+
+Hardcoding and scope scan:
+
+- Production-code scan found no devtests, benchmark, fixture, question-ID, expected-answer, hidden-answer, or question-string branches.
+- The only `owner` hit in production was the pre-existing OS filesystem metadata helper `owner_name`, not a domain-specific handler.
+- Documentation references to `/data/src/github/devtests/rag_tests` remain read-only context references.
+- Public all2text install/CLI path remains the normal `python -m pip install .`; no dependency extras were reintroduced for the normal user path.
+
+Benchmark and score note:
+
+- No rag_tests benchmark was rerun or modified; devtests was used only as read-only design context.
+- There is no internal all2text score calculation comparable to the DRT benchmark in this session. The validation signal for this checkpoint is the full local pytest suite, installed CLI capability output, and smoke conversion.
+- Official-score caveat: none claimed. This checkpoint improves provider architecture, truthfulness, route planning, and safe schema probes, but model-backed extraction quality still depends on external tools/models being installed and configured outside the repo.
+
+Next best technical step:
+
+- Implement one real heavy-provider execution adapter at a time behind the new contract, starting with the smallest safe target: bounded local chart model inference or `whisper.cpp` ASR once model files and executables are explicitly configured outside the repo.
