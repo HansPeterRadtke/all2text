@@ -7,7 +7,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from all2text.backends.binary import binary_summary_text
-from all2text.config import config_for_context
+from all2text.config import config_for_context, effective_provider
 from all2text.models import Classification, ConversionContext, ConversionResult
 
 WORD_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
@@ -364,6 +364,9 @@ def convert_pdf(
     classification: Classification,
     ctx: ConversionContext,
 ) -> ConversionResult:
+    docling_result = maybe_convert_with_docling(path, rel_path, classification, ctx)
+    if docling_result is not None:
+        return docling_result
     params = document_module_params(ctx, classification)
     max_pdf_pages = positive_int(params.get("max_pdf_pages"))
     try:
@@ -427,6 +430,62 @@ def convert_pdf(
             "max_pdf_pages": max_pdf_pages,
         },
         limitations=limitations,
+    )
+
+
+def maybe_convert_with_docling(
+    path: Path,
+    rel_path: Path,
+    classification: Classification,
+    ctx: ConversionContext,
+) -> ConversionResult | None:
+    cfg = config_for_context(ctx.config)
+    provider = effective_provider(cfg, "document_intelligence")
+    if provider.name != "docling" or not provider.enabled or not bool(provider.get("auto_invoke", False)):
+        return None
+    try:
+        from docling.document_converter import DocumentConverter
+    except Exception:
+        return None
+    try:
+        converter = DocumentConverter()
+        converted = converter.convert(str(path))
+        document = getattr(converted, "document", converted)
+        if hasattr(document, "export_to_markdown"):
+            text = str(document.export_to_markdown())
+            export_method = "export_to_markdown"
+        elif hasattr(document, "export_to_text"):
+            text = str(document.export_to_text())
+            export_method = "export_to_text"
+        else:
+            text = str(document)
+            export_method = "str_document"
+    except Exception as exc:
+        fallback = document_fallback(
+            path,
+            classification,
+            ctx,
+            dependency_error=f"docling conversion failed:{exc}",
+        )
+        fallback.warnings.append(f"docling_conversion_failed:{exc}")
+        fallback.metadata["docling"] = {"attempted": True, "used": False}
+        fallback.limitations.append("Docling was configured but failed; safe document fallback output was used.")
+        return fallback
+    return ConversionResult(
+        text=(
+            f"File: {rel_path.name}\n"
+            "Description: Document conversion using Docling.\n\n"
+            f"Docling export method: {export_method}\n\n"
+            "Content:\n"
+            f"{text.rstrip()}\n"
+        ),
+        converter_used="docling_document_backend",
+        extraction_methods_used=["docling_document_conversion", f"docling_{export_method}"],
+        metadata={
+            "format": classification.concrete_format,
+            "docling": {"attempted": True, "used": True, "export_method": export_method},
+        },
+        limitations=["Docling output is accepted as provider evidence; embedded media/model behavior depends on the installed Docling stack."],
     )
 
 

@@ -385,6 +385,7 @@ def test_cli_doctor_and_install_tools_commands(capsys) -> None:
     doctor_out = capsys.readouterr().out
     assert '"profile"' in doctor_out
     assert '"provider_statuses"' in doctor_out
+    assert '"provider_execution_summary"' in doctor_out
 
     assert main(["install-tools"]) == 0
     tools_out = capsys.readouterr().out

@@ -30,6 +30,8 @@ class CadPlaceholderBackend:
         extra = [f"- limitation: {limitation}"]
         if schema:
             extra.extend(["- schema_probe:", json.dumps(schema, ensure_ascii=False, sort_keys=True)[:4000]])
+        if classification.is_textual:
+            extra.extend(["", "Source text:", safe_text_source(path)])
         return ConversionResult(
             text=binary_summary_text(
                 path,
@@ -104,3 +106,10 @@ def ifc_schema(path: Path) -> tuple[dict[str, Any], list[str], list[str]]:
         }, [], ["ifcopenshell_schema_probe"]
     except Exception as exc:
         return {}, [f"ifcopenshell_schema_probe_failed:{exc}"], []
+
+
+def safe_text_source(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        return f"<source text unavailable: {exc}>"

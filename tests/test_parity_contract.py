@@ -108,7 +108,9 @@ def test_geospatial_text_is_preserved_and_binary_geospatial_is_placeholder(tmp_p
     geo = entry(manifest, "map.geojson")
     shp = entry(manifest, "shape.shp")
     assert geo["classification"]["concrete_format"] == "GeoJSON"
-    assert extracted_text(target / "map.geojson.txt") == geojson
+    assert geo["converter_used"] == "geospatial_placeholder_backend"
+    assert geo["converter_metadata"]["schema_probe"]["format"] == "geojson"
+    assert "Source text:\n" + geojson in extracted_text(target / "map.geojson.txt")
     assert shp["classification"]["rough_category"] == "geospatial"
     assert shp["converter_used"] == "geospatial_placeholder_backend"
     assert "Geospatial safe summary" in (target / "shape.shp.txt").read_text(encoding="utf-8")

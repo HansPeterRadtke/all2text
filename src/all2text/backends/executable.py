@@ -50,11 +50,14 @@ def executable_schema_probe(path: Path, classification: Classification) -> tuple
     with path.open("rb") as handle:
         header = handle.read(4096)
     if header.startswith(b"MZ"):
-        return pe_schema(path)
+        schema, warnings, methods = pe_schema(path)
+        return augment_lief_schema(path, schema, warnings, methods)
     if header.startswith(b"\xcf\xfa\xed\xfe") or header.startswith(b"\xfe\xed\xfa\xcf") or header.startswith(b"\xca\xfe\xba\xbe"):
-        return macho_schema(path)
+        schema, warnings, methods = macho_schema(path)
+        return augment_lief_schema(path, schema, warnings, methods)
     if header.startswith(b"\x7fELF"):
-        return elf_header_schema(header)
+        schema, warnings, methods = elf_header_schema(header)
+        return augment_lief_schema(path, schema, warnings, methods)
     return {}, [], []
 
 
@@ -141,3 +144,50 @@ def elf_header_schema(header: bytes) -> tuple[dict[str, Any], list[str], list[st
         "code_executed": False,
         "sections_dumped": False,
     }, [], ["elf_header_metadata_probe"]
+
+
+def augment_lief_schema(
+    path: Path,
+    schema: dict[str, Any],
+    warnings: list[str],
+    methods: list[str],
+) -> tuple[dict[str, Any], list[str], list[str]]:
+    lief, lief_warnings, lief_methods = lief_schema(path)
+    if lief:
+        schema = dict(schema)
+        schema["lief"] = lief
+        methods = [*methods, *lief_methods]
+    return schema, [*warnings, *lief_warnings], methods
+
+
+def lief_schema(path: Path) -> tuple[dict[str, Any], list[str], list[str]]:
+    try:
+        import lief
+    except Exception as exc:
+        return {}, [f"lief_unavailable:{exc}"], []
+    try:
+        parsed = lief.parse(str(path))
+    except Exception as exc:
+        return {}, [f"lief_metadata_probe_failed:{exc}"], []
+    if parsed is None:
+        return {}, ["lief_metadata_probe_unrecognized_binary"], []
+    try:
+        sections = getattr(parsed, "sections", []) or []
+        libraries = getattr(parsed, "libraries", []) or []
+        imported_functions = getattr(parsed, "imported_functions", []) or []
+        exported_functions = getattr(parsed, "exported_functions", []) or []
+        schema = {
+            "provider": "lief",
+            "format": str(getattr(parsed, "format", type(parsed).__name__)),
+            "entrypoint": getattr(parsed, "entrypoint", None),
+            "section_count": len(sections),
+            "sections_sample": [str(getattr(section, "name", "")) for section in list(sections)[:50]],
+            "libraries_sample": [str(item) for item in list(libraries)[:50]],
+            "imported_function_sample": [str(item) for item in list(imported_functions)[:100]],
+            "exported_function_sample": [str(item) for item in list(exported_functions)[:100]],
+            "code_executed": False,
+            "disassembled": False,
+        }
+        return schema, [], ["lief_metadata_probe"]
+    except Exception as exc:
+        return {}, [f"lief_metadata_probe_failed:{exc}"], []

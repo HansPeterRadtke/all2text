@@ -82,7 +82,12 @@ class ImageAnalysisBackend:
         if vlm_used:
             methods.append("openai_compatible_vlm_caption")
 
-        chart_analysis = build_chart_analysis_schema(profile, statuses, candidate=chart_candidate)
+        chart_analysis = build_chart_analysis_schema(
+            profile,
+            statuses,
+            candidate=chart_candidate,
+            ocr_result=ocr_result,
+        )
         document_hooks = {
             "document_intelligence": next((status.to_dict() for status in statuses if status.name == "document_intelligence"), None),
             "screenshot_or_document_candidate": route.family in {"document", "screenshot"},
@@ -466,9 +471,18 @@ def run_ocr_if_configured(image: Any | None, provider: Any) -> dict[str, Any]:
         "attempted": False,
         "used": False,
         "text": "",
+        "candidate_text": "",
+        "raw_text_preview": "",
         "warnings": [],
         "provider": getattr(provider, "name", "none"),
+        "language": str(provider.get("language", "eng") if provider is not None else "eng"),
+        "config": str(provider.get("config", provider.get("tesseract_config", "")) if provider is not None else ""),
         "confidence": None,
+        "word_count": 0,
+        "accepted_word_count": 0,
+        "min_confidence": provider.get("min_confidence", 35) if provider is not None else 35,
+        "min_characters": provider.get("min_characters", 4) if provider is not None else 4,
+        "min_alnum_ratio": provider.get("min_alnum_ratio", 0.35) if provider is not None else 0.35,
         "discard_reason": "ocr_disabled_or_not_auto_invoked",
     }
     if not getattr(provider, "enabled", False) or provider.name != "tesseract" or not bool(provider.get("auto_invoke", False)):
@@ -483,16 +497,131 @@ def run_ocr_if_configured(image: Any | None, provider: Any) -> dict[str, Any]:
 
         if provider.get("tesseract_cmd"):
             pytesseract.pytesseract.tesseract_cmd = str(provider.get("tesseract_cmd"))
-        text = pytesseract.image_to_string(image, lang=str(provider.get("language", "eng")), timeout=int(provider.get("timeout_seconds", 30)))
+        ocr_image = preprocess_ocr_image(image, str(provider.get("preprocess", "none") or "none"))
+        language = str(provider.get("language", "eng") or "eng")
+        config = str(provider.get("config", provider.get("tesseract_config", "")) or "")
+        timeout = int(provider.get("timeout_seconds", 30))
+        min_confidence = float(provider.get("min_confidence", 35) or 0)
+        try:
+            data = pytesseract.image_to_data(
+                ocr_image,
+                lang=language,
+                config=config,
+                timeout=timeout,
+                output_type=pytesseract.Output.DICT,
+            )
+            parsed = parse_tesseract_data(data, min_confidence=min_confidence)
+            text = parsed["text"]
+            raw_text = parsed["raw_text"]
+            result["confidence"] = parsed["mean_confidence"]
+            result["word_count"] = parsed["word_count"]
+            result["accepted_word_count"] = parsed["accepted_word_count"]
+        except Exception as exc:
+            result["warnings"].append(f"ocr_confidence_data_unavailable:{exc}")
+            text = pytesseract.image_to_string(
+                ocr_image,
+                lang=language,
+                config=config,
+                timeout=timeout,
+            )
+            raw_text = text
     except Exception as exc:
         result["warnings"].append(f"ocr_failed:{exc}")
         result["discard_reason"] = "provider_failed"
         return result
     cleaned = text.strip()
+    raw_cleaned = raw_text.strip()
+    result["candidate_text"] = cleaned
+    result["raw_text_preview"] = raw_cleaned[:1000]
+    min_characters = int(provider.get("min_characters", 4) or 1)
+    min_alnum_ratio = float(provider.get("min_alnum_ratio", 0.35) or 0)
+    if not cleaned:
+        result["discard_reason"] = "empty_or_below_confidence_ocr_result" if raw_cleaned else "empty_ocr_result"
+        return result
+    if len(cleaned) < min_characters:
+        result["discard_reason"] = f"below_min_characters:{len(cleaned)}<{min_characters}"
+        return result
+    alnum_ratio = ocr_alnum_ratio(cleaned)
+    result["alnum_ratio"] = round(alnum_ratio, 4)
+    if alnum_ratio < min_alnum_ratio:
+        result["discard_reason"] = f"below_min_alnum_ratio:{alnum_ratio:.3f}<{min_alnum_ratio:.3f}"
+        return result
     result["text"] = cleaned
-    result["used"] = bool(cleaned)
-    result["discard_reason"] = None if cleaned else "empty_ocr_result"
+    result["used"] = True
+    result["discard_reason"] = None
     return result
+
+
+def preprocess_ocr_image(image: Any, mode: str) -> Any:
+    normalized = mode.strip().casefold()
+    if normalized in {"", "none"}:
+        return image
+    if normalized == "grayscale":
+        return image.convert("L")
+    if normalized in {"threshold", "binary"}:
+        gray = image.convert("L")
+        return gray.point(lambda value: 255 if value >= 180 else 0)
+    return image
+
+
+def parse_tesseract_data(data: dict[str, Any], *, min_confidence: float) -> dict[str, Any]:
+    texts = list(data.get("text") or [])
+    confidences = list(data.get("conf") or [])
+    block_nums = list(data.get("block_num") or [])
+    par_nums = list(data.get("par_num") or [])
+    line_nums = list(data.get("line_num") or [])
+    raw_words: list[str] = []
+    accepted_confidences: list[float] = []
+    lines: dict[tuple[int, int, int], list[str]] = {}
+    line_order: list[tuple[int, int, int]] = []
+    for index, text_value in enumerate(texts):
+        word = str(text_value or "").strip()
+        if not word:
+            continue
+        raw_words.append(word)
+        confidence = parse_ocr_confidence(confidences[index] if index < len(confidences) else None)
+        if confidence is not None and confidence < min_confidence:
+            continue
+        if confidence is not None:
+            accepted_confidences.append(confidence)
+        key = (
+            int(block_nums[index]) if index < len(block_nums) and str(block_nums[index]).isdigit() else 0,
+            int(par_nums[index]) if index < len(par_nums) and str(par_nums[index]).isdigit() else 0,
+            int(line_nums[index]) if index < len(line_nums) and str(line_nums[index]).isdigit() else index,
+        )
+        if key not in lines:
+            lines[key] = []
+            line_order.append(key)
+        lines[key].append(word)
+    accepted_lines = [" ".join(lines[key]) for key in line_order if lines.get(key)]
+    mean_confidence = (
+        round(sum(accepted_confidences) / len(accepted_confidences), 2)
+        if accepted_confidences
+        else None
+    )
+    return {
+        "text": "\n".join(accepted_lines),
+        "raw_text": " ".join(raw_words),
+        "mean_confidence": mean_confidence,
+        "word_count": len(raw_words),
+        "accepted_word_count": sum(len(lines[key]) for key in line_order),
+    }
+
+
+def parse_ocr_confidence(value: Any) -> float | None:
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        return None
+    return confidence if confidence >= 0 else None
+
+
+def ocr_alnum_ratio(text: str) -> float:
+    visible = [char for char in text if not char.isspace()]
+    if not visible:
+        return 0.0
+    alnum = sum(1 for char in visible if char.isalnum())
+    return alnum / len(visible)
 
 
 def maybe_call_vlm(
@@ -587,6 +716,7 @@ def build_chart_analysis_schema(
     statuses: list[Any],
     *,
     candidate: bool,
+    ocr_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     structure = profile.get("structure") if isinstance(profile.get("structure"), dict) else {}
     chart_type = "unknown_chart"
@@ -594,6 +724,11 @@ def build_chart_analysis_schema(
         if int(structure.get("horizontal_line_rows") or 0) >= 1 and int(structure.get("vertical_line_columns") or 0) >= 1:
             chart_type = "axis_based_chart_or_plot"
     status = next((status.to_dict() for status in statuses if status.name == "chart"), None)
+    ocr_used = bool((ocr_result or {}).get("used"))
+    ocr_text = str((ocr_result or {}).get("text") or "")
+    ocr_source = "tesseract_ocr_text" if ocr_used else "unavailable"
+    if ocr_used and not candidate:
+        ocr_source = "ocr_text_available_but_not_chart_candidate"
     return {
         "schema": "all2text.chart_analysis.v1",
         "candidate": candidate,
@@ -605,15 +740,22 @@ def build_chart_analysis_schema(
             "source": "deterministic_geometry" if candidate else "not_chart_candidate",
             "confidence": "low" if candidate else "none",
         },
-        "title": {"value": None, "source": "unavailable"},
+        "title": {"value": None, "source": ocr_source},
         "axes": {
-            "x": {"label": None, "ticks": [], "source": "unavailable"},
-            "y": {"label": None, "ticks": [], "source": "unavailable"},
+            "x": {"label": None, "ticks": [], "source": ocr_source},
+            "y": {"label": None, "ticks": [], "source": ocr_source},
         },
-        "legend": {"labels": [], "source": "unavailable"},
+        "legend": {"labels": [], "source": ocr_source},
         "series": [],
         "table": {"rows": [], "source": "unavailable"},
         "values": {"recoverable": False, "source": "unavailable", "caveat": "No chart provider returned numeric values."},
+        "ocr": {
+            "attempted": bool((ocr_result or {}).get("attempted")),
+            "used": ocr_used,
+            "text": ocr_text,
+            "confidence": (ocr_result or {}).get("confidence"),
+            "limitation": "OCR text is evidence only; no chart layout/value reconstruction is inferred.",
+        },
         "evidence": {
             "taxonomy": profile.get("taxonomy"),
             "taxonomy_source": profile.get("taxonomy_source"),
@@ -625,6 +767,7 @@ def build_chart_analysis_schema(
         "limitations": [
             "No chart specialist provider produced table/series values.",
             "Geometry/profile evidence is reported without invented chart labels or values.",
+            "OCR text is not converted into axes, legend, or values without a layout/chart provider.",
         ],
     }
 

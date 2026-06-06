@@ -185,3 +185,126 @@ Benchmark and score note:
 Next best technical step:
 
 - Implement one real heavy-provider execution adapter at a time behind the new contract, starting with the smallest safe target: bounded local chart model inference or `whisper.cpp` ASR once model files and executables are explicitly configured outside the repo.
+
+## 2026-06-06 Jetson real provider execution continuation
+
+Context and startup:
+
+- Worktree: `/data/src/github/all2text`; edits were limited to this repository.
+- Read-only reference only: `/data/src/github/devtests/rag_tests`; no devtests, KnowMoreDiRT, DRT,
+  model, cache, runtime-log, or unrelated-repo files were modified.
+- Visible shell settings did not expose model/reasoning variables; the supervisor/user context
+  stated `gpt-5.5` with `xhigh` reasoning.
+- Baseline status: `## master...origin/master`, head
+  `d231a05 (HEAD -> master, origin/master) Record provider implementation session`.
+- Recent commits inspected: `d231a05`, `4a53b43`, `df793f7`, `97828d6`, `4feb06b`, `1007569`,
+  `6c5c403`, and `a010714`.
+
+Runtime capability findings:
+
+- External tools present: `/usr/bin/file`, `/usr/bin/getfacl`, `/usr/bin/ffprobe`,
+  `/usr/bin/ffmpeg`, `/usr/bin/tesseract`, and `/usr/bin/libreoffice`.
+- External tools absent: `whisper`, `whisper.cpp`, `whisper-cli`, `main`, `radare2`, `rabin2`,
+  and `capa`.
+- Python packages present in the active environment included `transformers`, `torch`,
+  `pytesseract`, `PIL`, `cv2`, `faster_whisper`, `mutagen`, `ezdxf`, `netCDF4`, `astropy`,
+  `pyarrow`, `scipy`, `pyproj`, `shapely`, `pefile`, `macholib`, `lief`, and `numpy`.
+- Python packages absent included `docling`, `paddleocr`, `paddle`, `scenedetect`, `whisper`, and
+  `ifcopenshell`.
+- Local text endpoint `http://127.0.0.1:14829/v1` was reachable with
+  `Qwen2.5-14B-Instruct-Q4_K_M.gguf`; the default vision endpoint on `14830` was not reachable.
+- Local model roots contained faster-whisper snapshots, DePlot/UniChart chart model directories
+  under `/data/models/rag_tests/vision`, Qwen text GGUFs, and Qwen2.5-VL llama.cpp files.
+- Direct `python -m pip install docling` failed with `No matching distribution found for docling`.
+
+Mechanisms implemented:
+
+- Tesseract OCR now runs as a real adapter through `pytesseract` and the configured Tesseract
+  executable. It records language, config, timeout, word counts, raw preview, mean confidence, and
+  applies configurable minimum confidence, minimum character, and alphanumeric-ratio gates before
+  setting `ocr_used=true`.
+- ffmpeg is now reported as an available core-used tool when present, independent of whether frame
+  sampling is configured. The video frame provider remains opt-in, but when `sample_frames=true` and
+  `auto_invoke=true` it extracts interval or keyframe frames into a bounded runtime directory,
+  records counts/metadata, and cleans temporary files unless `preserve_frames=true`.
+- Media profiles now include deterministic audio-kind routing from streams, tags, duration,
+  channels, and WAV waveform stats. It can report `silence`, `very_short`, `speech_unknown`,
+  `music_unknown`, `mixed_unknown`, `no_audio_stream`, or `unknown_audio_content` with evidence and
+  confidence.
+- Speech hooks now execute configured local faster-whisper and whisper.cpp providers only when a
+  local model path exists. Model ids are not downloaded implicitly. Parakeet/Canary and other heavy
+  routes remain blocked unless dependencies and safe adapters exist.
+- Docling has a real gated adapter path, but the current Jetson environment cannot install/import
+  the package, so doctor reports an exact dependency blocker and PDF conversion falls back safely.
+- Default CAD and geospatial routing now uses safe schema backends. Textual GeoJSON, KML, and CAD
+  source text is preserved inside those outputs while bounded schema metadata is emitted.
+- GeoJSON and KML schema probes were added, with optional Shapely bounds and pyproj CRS parsing.
+- Executable metadata now augments ELF/PE/Mach-O probes with a bounded LIEF summary when installed.
+- Doctor/capabilities and manifests now include `provider_execution_summary`, separating installed
+  Python providers, installed-but-contract-only libraries, external tools, reachable endpoints,
+  discovered model files, implemented/executable providers, contract-only providers, and blockers.
+- The generated text report now includes the compact provider execution summary.
+
+Validation results:
+
+- Focused tests:
+  `PYTHONPYCACHEPREFIX=/data/tmp/all2text_pycache PYTHONPATH=src python -m pytest -q tests/test_provider_contracts_and_routes.py tests/test_configured_providers_and_documents.py tests/test_parity_contract.py`
+  passed, 39 selected tests.
+- Full tests:
+  `PYTHONPYCACHEPREFIX=/data/tmp/all2text_pycache python -m compileall -q src tests` passed, and
+  `PYTHONPYCACHEPREFIX=/data/tmp/all2text_pycache PYTHONPATH=src python -m pytest -q` passed.
+  Collection count after changes was 103 tests.
+- `git diff --check` passed.
+- `python -m ruff --version` failed with `No module named ruff`; ruff was not run.
+- Plain install:
+  `python -m pip install .` built and installed `all2text-0.1.0` successfully through the normal
+  install path, with no extras.
+- Installed doctor/capabilities:
+  `python -m all2text doctor` and `all2text --capabilities` both emitted
+  `provider_execution_summary`; installed reports showed available external tools
+  `ffmpeg`, `ffprobe`, `file`, `getfacl`, and `tesseract`.
+- Installed smoke conversion in `/data/tmp` converted five files. The smoke used Tesseract OCR on a
+  PNG, sampled one MP4 frame with ffmpeg and cleaned it, classified a WAV as `silence`, and emitted
+  GeoJSON schema metadata through the geospatial backend.
+- Faster-whisper smoke with the local tiny.en snapshot executed on a 0.5 second silent WAV. It
+  loaded `/data/models/faster_whisper/models--Systran--faster-whisper-tiny.en/snapshots/0d3d19a32d3338f10357c0889762bd8d64bbdeba`,
+  returned language `en` with probability `1.0`, and correctly returned no transcript text for
+  silence instead of fabricating content.
+
+Hardcoding and scope scan:
+
+- Production-code scan found no question IDs, benchmark labels, expected-answer literals,
+  hidden-answer use, question-string branches, current-failure entities, fixture-name branches, or
+  domain-specific owner/reviewer/customer/ticket/runbook handlers.
+- The only production `owner` hit was the pre-existing filesystem metadata helper `owner_name`.
+- Hits for `devtests`, `rag_tests`, `benchmark`, and `fixture` were documentation lineage notes or
+  generic test wording, not production logic.
+
+Score/failure-count note:
+
+- No internal all2text benchmark was run, and no DRT-style score applies to this repository. The
+  changed validation count is local tests increasing to 103 collected tests, with full pytest
+  passing. Official benchmark score: not claimed.
+
+Public API and install status:
+
+- Public API remains unchanged: `run(source_folder, target_folder, *, options=None, registry=None,
+  config=None)` and the CLI/module entry points remain compatible.
+- Normal install remains exactly `python -m pip install .`; no normal-user dependency extras were
+  added.
+
+Commit/push:
+
+- Commit hash: `c722447` before log-hash amend; final amended hash is recorded in git history for
+  this entry.
+- Push target: `origin/master`.
+
+Remaining blockers and next best step:
+
+- Docling is blocked by unavailable package resolution in this Python/runtime.
+- PaddleOCR/PaddleOCR-VL, GLM-OCR, olmOCR, chart specialists, pyannote/diarization, radare2, capa,
+  and whisper.cpp remain unavailable or contract-only unless their external packages, model files,
+  and executables are deliberately installed/configured outside the repo.
+- The next best technical step is PDF page rendering plus OCR fallback, followed by per-frame OCR/VLM
+  analysis over the new ffmpeg frame sampler, because those build directly on executable providers
+  now in place.

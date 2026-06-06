@@ -12,12 +12,12 @@ OPTIONAL_PYTHON_LIBRARIES: list[dict[str, Any]] = [
     {"name": "beautifulsoup4", "module": "bs4", "extra": "documents", "implemented_in_core": False},
     {"name": "docling", "module": "docling", "extra": "document-ocr", "implemented_in_core": False},
     {"name": "ebooklib", "module": "ebooklib", "extra": "documents", "implemented_in_core": False},
-    {"name": "faster-whisper", "module": "faster_whisper", "extra": "audio", "implemented_in_core": False},
+    {"name": "faster-whisper", "module": "faster_whisper", "extra": "audio", "implemented_in_core": True},
     {"name": "fonttools", "module": "fontTools", "extra": "fonts", "implemented_in_core": False},
     {"name": "h5netcdf", "module": "h5netcdf", "extra": "scientific", "implemented_in_core": False},
     {"name": "h5py", "module": "h5py", "extra": "scientific", "implemented_in_core": True},
     {"name": "IfcOpenShell", "module": "ifcopenshell", "extra": "cad", "implemented_in_core": True},
-    {"name": "LIEF", "module": "lief", "extra": "executables", "implemented_in_core": False},
+    {"name": "LIEF", "module": "lief", "extra": "executables", "implemented_in_core": True},
     {"name": "markitdown", "module": "markitdown", "extra": "markitdown", "implemented_in_core": False},
     {"name": "macholib", "module": "macholib", "extra": "executables", "implemented_in_core": True},
     {"name": "mutagen", "module": "mutagen", "extra": "media", "implemented_in_core": True},
@@ -34,14 +34,14 @@ OPTIONAL_PYTHON_LIBRARIES: list[dict[str, Any]] = [
     {"name": "pyannote.audio", "module": "pyannote.audio", "extra": "audio", "implemented_in_core": False},
     {"name": "pyarrow", "module": "pyarrow", "extra": "scientific", "implemented_in_core": True},
     {"name": "pypdf", "module": "pypdf", "extra": "documents", "implemented_in_core": True},
-    {"name": "pyproj", "module": "pyproj", "extra": "geospatial", "implemented_in_core": False},
+    {"name": "pyproj", "module": "pyproj", "extra": "geospatial", "implemented_in_core": True},
     {"name": "pyshp", "module": "shapefile", "extra": "geospatial", "implemented_in_core": True},
     {"name": "pytesseract", "module": "pytesseract", "extra": "ocr", "implemented_in_core": True},
     {"name": "python-docx", "module": "docx", "extra": "documents", "implemented_in_core": True},
     {"name": "python-pptx", "module": "pptx", "extra": "documents", "implemented_in_core": True},
     {"name": "rarfile", "module": "rarfile", "extra": "archives", "implemented_in_core": False},
     {"name": "scipy", "module": "scipy", "extra": "scientific", "implemented_in_core": True},
-    {"name": "shapely", "module": "shapely", "extra": "geospatial", "implemented_in_core": False},
+    {"name": "shapely", "module": "shapely", "extra": "geospatial", "implemented_in_core": True},
     {"name": "textract", "module": "textract", "extra": "legacy-textract", "implemented_in_core": False},
     {"name": "xlrd", "module": "xlrd", "extra": "documents", "implemented_in_core": True},
     {"name": "torch", "module": "torch", "extra": "models", "implemented_in_core": False},
@@ -53,7 +53,7 @@ OPTIONAL_PYTHON_LIBRARIES: list[dict[str, Any]] = [
 EXTERNAL_TOOLS: list[dict[str, Any]] = [
     {"name": "file", "executable": "file", "used_by_core": True},
     {"name": "ffprobe", "executable": "ffprobe", "used_by_core": True},
-    {"name": "ffmpeg", "executable": "ffmpeg", "used_by_core": False},
+    {"name": "ffmpeg", "executable": "ffmpeg", "used_by_core": True},
     {"name": "tesseract", "executable": "tesseract", "used_by_core": True},
     {"name": "getfacl", "executable": "getfacl", "used_by_core": True},
     {"name": "libreoffice", "executable": "libreoffice", "used_by_core": False},
@@ -207,9 +207,6 @@ def tool_enabled(config: All2TextConfig, name: str) -> bool:
     if name == "tesseract":
         provider = config.provider("ocr")
         return bool(provider.enabled and provider.name == "tesseract")
-    if name == "ffmpeg":
-        provider = config.provider("video_frames")
-        return bool(provider.enabled and provider.name == "ffmpeg")
     if name == "libreoffice":
         return False
     return True
@@ -220,8 +217,6 @@ def tool_disabled_reason(config: All2TextConfig, name: str) -> str:
         return "disabled_by_run.use_file_command=false"
     if name == "tesseract":
         return "disabled_by_ocr_provider_config"
-    if name == "ffmpeg":
-        return "disabled_by_video_frames_provider_config"
     if name == "libreoffice":
         return "libreoffice_adapter_not_implemented_in_core"
     return "disabled_by_config"
@@ -253,4 +248,96 @@ def capability_summary(
         "available_external_tools": sorted(item["name"] for item in enabled_tools if item["available"]),
         "missing_external_tools": sorted(missing_tools),
         "disabled_by_profile": sorted(set(disabled_by_profile)),
+    }
+
+
+def provider_execution_summary(
+    capabilities: dict[str, Any],
+    provider_statuses: list[dict[str, Any]],
+    provider_family_statuses: list[dict[str, Any]],
+) -> dict[str, Any]:
+    optional_python = capabilities.get("optional_python_libraries", [])
+    external_tools = capabilities.get("external_tools", [])
+    installed_python = [
+        str(item.get("name"))
+        for item in optional_python
+        if item.get("available") and item.get("implemented_in_core")
+    ]
+    installed_contract_only = [
+        str(item.get("name"))
+        for item in optional_python
+        if item.get("available") and not item.get("implemented_in_core")
+    ]
+    available_tools = [
+        {
+            "name": item.get("name"),
+            "source": item.get("source"),
+            "used_by_core": item.get("used_by_core"),
+        }
+        for item in external_tools
+        if item.get("available")
+    ]
+    blocked_tools = [
+        {"name": item.get("name"), "error": item.get("error")}
+        for item in external_tools
+        if not item.get("available") or item.get("error")
+    ]
+    reachable_endpoints = []
+    for status in provider_statuses:
+        lifecycle = status.get("lifecycle") or {}
+        if lifecycle.get("endpoint_reachable"):
+            reachable_endpoints.append(
+                {
+                    "name": status.get("name"),
+                    "provider": (status.get("details") or {}).get("provider"),
+                    "source": status.get("source"),
+                    "model": (status.get("details") or {}).get("model"),
+                    "auto_invoke": (status.get("details") or {}).get("auto_invoke"),
+                }
+            )
+    model_matches = []
+    for status in provider_family_statuses:
+        details = status.get("details") or {}
+        for match in details.get("model_matches") or []:
+            model_matches.append(str(match))
+    implemented = [
+        {
+            "name": status.get("name"),
+            "family": ((status.get("details") or {}).get("candidate") or {}).get("family"),
+            "kind": status.get("kind"),
+            "source": status.get("source"),
+        }
+        for status in provider_family_statuses
+        if status.get("available")
+    ]
+    contract_only = [
+        {
+            "name": status.get("name"),
+            "family": ((status.get("details") or {}).get("candidate") or {}).get("family"),
+            "kind": status.get("kind"),
+            "error": status.get("error"),
+        }
+        for status in provider_family_statuses
+        if ((status.get("details") or {}).get("execution_status") == "contract_only")
+    ]
+    blockers = [
+        {
+            "name": status.get("name"),
+            "kind": status.get("kind"),
+            "enabled": status.get("enabled"),
+            "error": status.get("error"),
+        }
+        for status in [*provider_statuses, *provider_family_statuses]
+        if status.get("error") and not status.get("available")
+    ]
+    return {
+        "installed_python_providers": sorted(installed_python),
+        "installed_python_contract_only": sorted(installed_contract_only),
+        "external_tools_available": available_tools,
+        "external_tools_blocked": blocked_tools,
+        "reachable_endpoints": reachable_endpoints,
+        "locally_discovered_model_files": sorted(set(model_matches))[:100],
+        "implemented_and_executable_providers": implemented,
+        "contract_only_providers": contract_only,
+        "blockers": blockers[:200],
     }

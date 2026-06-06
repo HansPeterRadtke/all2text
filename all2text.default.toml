@@ -31,8 +31,8 @@ database = "database_metadata_backend"
 presentation = "document_native_backend"
 image = "image_analysis_backend"
 scientific_data = "scientific_placeholder_backend"
-geospatial = "text_exact_backend"
-cad_or_technical = "text_exact_backend"
+geospatial = "geospatial_placeholder_backend"
+cad_or_technical = "cad_placeholder_backend"
 font = "font_placeholder_backend"
 executable_or_binary = "executable_placeholder_backend"
 disk_image_or_container = "container_placeholder_backend"
@@ -157,6 +157,7 @@ timeout_seconds = 120
 auto_invoke = false
 ocr = false
 vlm = false
+preserve_frames = false
 
 [providers.cad]
 name = "none"

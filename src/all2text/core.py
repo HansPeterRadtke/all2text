@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from all2text.capabilities import capability_report
+from all2text.capabilities import capability_report, provider_execution_summary
 from all2text.config import All2TextConfig, load_config
 from all2text.backends.binary import BinaryFallbackBackend
 from all2text.detection import classify_path
@@ -57,6 +57,11 @@ def run(
     capabilities = capability_report(config)
     provider_status_list = [status.to_dict() for status in provider_statuses(config)]
     provider_family_status_list = [status.to_dict() for status in provider_family_statuses(config)]
+    execution_summary = provider_execution_summary(
+        capabilities,
+        provider_status_list,
+        provider_family_status_list,
+    )
 
     records: list[dict[str, Any]] = []
     for entry in entries:
@@ -94,6 +99,7 @@ def run(
         "capabilities": capabilities,
         "provider_statuses": provider_status_list,
         "provider_family_statuses": provider_family_status_list,
+        "provider_execution_summary": execution_summary,
         "registry": {"backends": registry.names(), "preferred_backends": registry.preferred_backends()},
         "module_statuses": build_module_statuses(config.modules, records, registry.names()),
         "directory_collisions": directory_collisions,

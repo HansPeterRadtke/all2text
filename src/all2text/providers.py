@@ -102,14 +102,21 @@ PROVIDER_CANDIDATES: tuple[ProviderCandidate, ...] = (
     ProviderCandidate("openbeats", "audio", "audio_classifier", ("transformers",), model_hints=("OpenBEATs", "openbeats")),
     ProviderCandidate("clap", "audio", "audio_classifier", ("laion_clap",), model_hints=("CLAP", "clap")),
     ProviderCandidate("whisper_cpp", "audio", "asr", executables=("whisper-cli", "whisper.cpp"), model_hints=("whisper", "Whisper")),
-    ProviderCandidate("faster_whisper", "audio", "asr", ("faster_whisper",), model_hints=("faster-whisper", "faster_whisper")),
+    ProviderCandidate(
+        "faster_whisper",
+        "audio",
+        "asr",
+        ("faster_whisper",),
+        model_hints=("faster-whisper", "faster_whisper"),
+        execution_status="implemented_when_dependency_found",
+    ),
     ProviderCandidate("whisper", "audio", "asr", ("whisper",), model_hints=("whisper", "Whisper")),
     ProviderCandidate("parakeet", "audio", "asr", ("nemo",), model_hints=("parakeet", "Parakeet")),
     ProviderCandidate("canary", "audio", "asr", ("nemo",), model_hints=("canary", "Canary")),
     ProviderCandidate("pyannote", "audio", "diarization", ("pyannote.audio",), model_hints=("pyannote", "diarization")),
     ProviderCandidate("diarizen", "audio", "diarization", ("diarizen",), model_hints=("diarizen", "Diarization")),
     ProviderCandidate("nemo", "audio", "diarization", ("nemo",), model_hints=("nemo", "diarization")),
-    ProviderCandidate("ffmpeg", "video", "frame_extractor", executables=("ffmpeg",), execution_status="planned"),
+    ProviderCandidate("ffmpeg", "video", "frame_extractor", executables=("ffmpeg",), execution_status="implemented"),
     ProviderCandidate("opencv", "video", "frame_analyzer", ("cv2",), execution_status="implemented_for_detection"),
     ProviderCandidate("pyscenedetect", "video", "scene_detection", ("scenedetect",)),
     ProviderCandidate("ezdxf", "cad_bim", "dxf_schema", ("ezdxf",), execution_status="implemented_when_dependency_found"),
@@ -122,11 +129,11 @@ PROVIDER_CANDIDATES: tuple[ProviderCandidate, ...] = (
     ProviderCandidate("scipy", "scientific_geospatial", "matlab_schema", ("scipy",), execution_status="implemented_when_dependency_found"),
     ProviderCandidate("numpy", "scientific_geospatial", "npy_schema", ("numpy",), execution_status="implemented"),
     ProviderCandidate("pyshp", "scientific_geospatial", "shapefile_schema", ("shapefile",), execution_status="implemented_when_dependency_found"),
-    ProviderCandidate("pyproj", "scientific_geospatial", "crs_transform_metadata", ("pyproj",)),
-    ProviderCandidate("shapely", "scientific_geospatial", "geometry_metadata", ("shapely",)),
+    ProviderCandidate("pyproj", "scientific_geospatial", "crs_transform_metadata", ("pyproj",), execution_status="implemented_when_dependency_found"),
+    ProviderCandidate("shapely", "scientific_geospatial", "geometry_metadata", ("shapely",), execution_status="implemented_when_dependency_found"),
     ProviderCandidate("pefile", "binary_metadata", "pe_metadata", ("pefile",), execution_status="implemented_when_dependency_found"),
     ProviderCandidate("macholib", "binary_metadata", "macho_metadata", ("macholib",)),
-    ProviderCandidate("lief", "binary_metadata", "cross_binary_metadata", ("lief",)),
+    ProviderCandidate("lief", "binary_metadata", "cross_binary_metadata", ("lief",), execution_status="implemented_when_dependency_found"),
     ProviderCandidate("capa", "binary_metadata", "binary_capability_metadata", executables=("capa",)),
     ProviderCandidate("radare2", "binary_metadata", "binary_metadata_tool", executables=("radare2", "r2")),
     ProviderCandidate("file", "binary_metadata", "file_type_metadata", executables=("file",), execution_status="implemented"),
@@ -727,32 +734,52 @@ def chart_status(provider: ProviderConfig, *, configured: ProviderConfig, profil
 
 def document_intelligence_status(provider: ProviderConfig, *, configured: ProviderConfig, profile: str) -> ProviderStatus:
     enabled = provider.enabled and provider.name != "none"
+    available = False
+    source = str(provider.get("endpoint", "") or provider.get("model_path", "") or "") or None
     if provider.get("disabled_by_profile"):
         error = f"document intelligence provider disabled by profile:{profile}"
     elif not enabled:
         error = "document intelligence provider disabled by config"
+    elif provider.name == "docling":
+        if not python_module_available("docling"):
+            error = "Python package not installed for document intelligence provider: docling"
+        else:
+            available = True
+            error = None
+            if not bool(provider.get("auto_invoke", False)):
+                error = "Docling is installed but auto_invoke=false; not invoked"
+    elif provider.name in {"paddleocr_vl", "glm_ocr", "olmocr"}:
+        dependency_found = _provider_dependency_found(provider.name)
+        if not dependency_found:
+            error = f"Python package/model dependency missing for document intelligence provider: {provider.name}"
+        else:
+            error = f"{provider.name} document intelligence adapter is contract-only; configure an implemented provider"
     else:
         error = f"document intelligence provider is not implemented in all2text core: {provider.name}"
     return ProviderStatus(
         name="document_intelligence",
         kind="document_intelligence",
         enabled=enabled,
-        available=False,
-        source=str(provider.get("endpoint", "") or "") or None,
+        available=available,
+        source=source,
         error=error,
         details={
             "provider": provider.name,
             "configured_enabled": configured.enabled,
             "effective_enabled": enabled,
             "profile": profile,
+            "auto_invoke": bool(provider.get("auto_invoke", False)),
+            "model_path": str(provider.get("model_path", "") or "") or None,
+            "endpoint": str(provider.get("endpoint", "") or "") or None,
         },
         lifecycle=provider_lifecycle(
             configured=configured.enabled or configured.name != "none",
             enabled=enabled,
-            available=False,
+            available=available,
             error=error,
             dependency_found=_provider_dependency_found(provider.name),
             auto_detected=bool(provider.get("endpoint", "") or provider.get("model_path", "")),
+            skipped=available and not bool(provider.get("auto_invoke", False)),
         ),
         evidence=[f"provider:{provider.name}"],
     )
@@ -782,14 +809,27 @@ def speech_status(provider: ProviderConfig, *, configured: ProviderConfig, profi
             error = f"Python package not installed for speech provider: {module_name}"
         elif not model_ref:
             error = "speech provider package found but model_path/model is not configured; no model download performed"
+        elif not Path(model_ref).expanduser().exists() and not bool(provider.get("allow_download", False)):
+            error = (
+                "speech provider model_path/model is not a local path; "
+                "no model download performed"
+            )
         else:
             available = True
     elif provider.name == "whisper_cpp":
-        executable_ref = str(provider.get("executable", "") or _which_executable("whisper-cli") or _which_executable("whisper.cpp") or "")
+        executable_ref = str(
+            provider.get("executable", "")
+            or _which_executable("whisper-cli")
+            or _which_executable("whisper.cpp")
+            or _which_executable("main")
+            or ""
+        )
         if not executable_ref:
             error = "whisper.cpp executable not found: whisper-cli or whisper.cpp"
         elif not model_ref:
             error = "whisper.cpp executable found but model_path/model is not configured"
+        elif not Path(model_ref).expanduser().exists():
+            error = "whisper.cpp model_path/model is not a local path"
         else:
             available = True
     else:
@@ -1096,7 +1136,7 @@ def _bounded_model_files(root: Path, *, max_depth: int, max_files: int) -> list[
         depth = len(current_path.parts) - root_depth
         if depth >= max_depth:
             dirs[:] = []
-        dirs[:] = [name for name in dirs if name not in {".git", "__pycache__", "snapshots", "blobs"}]
+        dirs[:] = [name for name in dirs if name not in {".git", "__pycache__", "blobs"}]
         for name in names:
             path = current_path / name
             if name in {"config.json", "model.safetensors", "pytorch_model.bin"} or path.suffix.casefold() == ".gguf":

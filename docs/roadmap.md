@@ -3,19 +3,18 @@
 Near-term:
 
 - MarkItDown backend for broad document extraction.
-- OCR confidence filtering and preprocessing for the current configurable Tesseract path.
-- Optional PDF scanned-page rendering/OCR fallback with bounded external commands.
+- PDF scanned-page rendering/OCR fallback with bounded external commands.
 - More complete OpenDocument spreadsheet/presentation handling.
 - Provider execution adapters for chart specialists and document intelligence.
-- Bounded video frame extraction execution for the configured frame plans now reported in metadata.
-- Geospatial schema/layer probes for GeoPackage and Shapefile with read-only libraries.
+- Deeper scene/keyframe analysis after the bounded ffmpeg frame sampler.
+- Additional geospatial schema/layer probes beyond current GeoJSON, KML, Shapefile, and GeoPackage metadata.
 
 Medium-term:
 
-- Audio transcription backend with clear model/provider metadata.
+- Broader audio transcription support beyond current faster-whisper and whisper.cpp local-model hooks.
 - Video frame OCR/VLM backend that consumes sampled frames and records per-frame evidence.
-- HDF5/NetCDF/FITS/Parquet schema and sample extractors.
-- CAD-specific DXF and STEP readers.
+- HDF5/NetCDF/FITS/Parquet bounded sample extractors beyond current schema metadata.
+- CAD-specific STEP readers and richer DXF layer/entity summaries.
 - Rich EPUB chapter extraction.
 - MSG/MBOX mail parsers with attachment conversion hooks.
 - Document-intelligence adapter contract for scanned PDFs and image-heavy office documents.

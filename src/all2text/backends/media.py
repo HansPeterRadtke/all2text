@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tempfile
+import wave
 from pathlib import Path
 from typing import Any
 
@@ -52,8 +54,29 @@ class MediaAnalysisBackend:
         params = cfg.module_params(family, classification.concrete_format.casefold())
         max_ffprobe_json_chars = positive_int_or_zero(params.get("max_ffprobe_json_chars"))
         statuses = provider_statuses(cfg, family=family)
-        profile = media_profile(classification, ffprobe_metadata, python_metadata)
+        profile = media_profile(classification, ffprobe_metadata, python_metadata, path=path)
         stages = media_stages(classification, profile, statuses, cfg)
+        frame_sampling = run_frame_sampling_if_configured(path, classification, profile, statuses, cfg)
+        if frame_sampling["warnings"]:
+            warnings.extend(str(item) for item in frame_sampling["warnings"])
+        if classification.rough_category == "video" and "frame_sampling" in stages:
+            stages["frame_sampling"].update(frame_sampling)
+        speech_execution = run_speech_if_configured(path, classification, profile, statuses, cfg)
+        if speech_execution["warnings"]:
+            warnings.extend(str(item) for item in speech_execution["warnings"])
+        if speech_execution["attempted"]:
+            speech_provider = effective_provider(cfg, "speech")
+            for key in ("language_detection", "transcription", "translation"):
+                if key in stages:
+                    stages[key]["attempted"] = True
+                    if key == "language_detection":
+                        stages[key]["used"] = bool(speech_execution.get("language"))
+                    elif key == "translation":
+                        stages[key]["used"] = bool(speech_provider.get("translate", False)) and bool(speech_execution.get("used"))
+                    else:
+                        stages[key]["used"] = not bool(speech_provider.get("translate", False)) and bool(speech_execution.get("used"))
+                    stages[key]["execution"] = speech_execution
+                    stages[key]["reason"] = speech_execution.get("reason")
         ffprobe_output_metadata, ffprobe_truncated = limit_ffprobe_metadata(
             ffprobe_metadata,
             max_chars=max_ffprobe_json_chars,
@@ -62,6 +85,8 @@ class MediaAnalysisBackend:
         if ffprobe_truncated:
             warnings.append(f"ffprobe_metadata_truncated:max_chars={max_ffprobe_json_chars}")
             limitations.append("ffprobe JSON metadata was truncated by media.max_ffprobe_json_chars.")
+        if frame_sampling["attempted"] and not frame_sampling.get("preserve_frames"):
+            limitations.append("Sampled video frames were extracted into a temporary directory and cleaned after metadata capture.")
         limitation = (
             "Media conversion is layered metadata/provider reporting in the core package. "
             "Speech transcription, translation, frame OCR, scene analysis, and VLM understanding "
@@ -82,6 +107,10 @@ class MediaAnalysisBackend:
             methods.append("python_mutagen_metadata")
         if ffprobe_metadata:
             methods.append("ffprobe_metadata")
+        if frame_sampling["attempted"]:
+            methods.append("ffmpeg_frame_sampling")
+        if speech_execution["attempted"]:
+            methods.append(f"{speech_execution.get('provider')}_speech_execution")
         return ConversionResult(
             text=text,
             converter_used=self.name,
@@ -94,9 +123,12 @@ class MediaAnalysisBackend:
                 "python_media_metadata": python_metadata,
                 "profile": profile,
                 "stages": stages,
+                "frame_sampling": frame_sampling,
+                "speech_execution": speech_execution,
                 "provider_statuses": [status.to_dict() for status in statuses],
             },
             limitations=limitations,
+            llm_used=False,
         )
 
 
@@ -194,6 +226,8 @@ def media_profile(
     classification: Classification,
     ffprobe_metadata: dict[str, object] | None,
     python_metadata: dict[str, object] | None = None,
+    *,
+    path: Path | None = None,
 ) -> dict[str, Any]:
     streams = ffprobe_metadata.get("streams", []) if isinstance(ffprobe_metadata, dict) else []
     if not isinstance(streams, list):
@@ -222,7 +256,7 @@ def media_profile(
             coarse = "visual_only_video"
         elif audio_streams:
             coarse = "audio_only_container"
-    return {
+    profile = {
         "family": classification.rough_category,
         "format": classification.concrete_format,
         "coarse_classification": coarse,
@@ -241,6 +275,191 @@ def media_profile(
             "inferred without a configured analyzer."
         ),
     }
+    profile["audio_kind"] = deterministic_audio_kind(
+        classification,
+        profile,
+        ffprobe_metadata,
+        python_metadata,
+        path=path,
+    )
+    return profile
+
+
+def deterministic_audio_kind(
+    classification: Classification,
+    profile: dict[str, Any],
+    ffprobe_metadata: dict[str, object] | None,
+    python_metadata: dict[str, object] | None,
+    *,
+    path: Path | None,
+) -> dict[str, Any]:
+    if classification.rough_category not in {"audio", "video"}:
+        return {"kind": "not_audio_media", "confidence": "none", "evidence": []}
+    evidence: list[str] = []
+    audio_count = int(profile.get("audio_stream_count") or 0)
+    video_count = int(profile.get("video_stream_count") or 0)
+    duration = profile.get("duration_seconds")
+    try:
+        duration_value = float(duration) if duration is not None else None
+    except (TypeError, ValueError):
+        duration_value = None
+    if audio_count <= 0:
+        return {"kind": "no_audio_stream", "confidence": "high", "evidence": ["audio_stream_count:0"]}
+    if duration_value is not None and duration_value < 0.5:
+        return {
+            "kind": "very_short",
+            "confidence": "medium",
+            "evidence": [f"duration_seconds:{duration_value}"],
+        }
+    wav_stats = wav_audio_stats(path) if path is not None and classification.concrete_format.upper() == "WAV" else None
+    if wav_stats:
+        evidence.append("wav_stats_available")
+        if bool(wav_stats.get("silence")):
+            return {
+                "kind": "silence",
+                "confidence": "high",
+                "evidence": [*evidence, f"rms_normalized:{wav_stats.get('rms_normalized')}"],
+                "waveform": wav_stats,
+            }
+    if video_count and audio_count:
+        return {
+            "kind": "mixed_unknown",
+            "confidence": "low",
+            "evidence": [*evidence, f"audio_stream_count:{audio_count}", f"video_stream_count:{video_count}"],
+            **({"waveform": wav_stats} if wav_stats else {}),
+        }
+    tag_kind = audio_kind_from_tags(ffprobe_metadata, python_metadata)
+    if tag_kind is not None:
+        return {
+            "kind": tag_kind,
+            "confidence": "low",
+            "evidence": [*evidence, "metadata_tags"],
+            **({"waveform": wav_stats} if wav_stats else {}),
+        }
+    channels = audio_channels(ffprobe_metadata, python_metadata)
+    if channels == 1:
+        kind = "speech_unknown"
+        evidence.append("mono_audio")
+    elif channels and channels >= 2:
+        kind = "music_unknown"
+        evidence.append(f"channels:{channels}")
+    else:
+        kind = "unknown_audio_content"
+        evidence.append("insufficient_stream_or_tag_evidence")
+    return {
+        "kind": kind,
+        "confidence": "low",
+        "evidence": evidence,
+        **({"waveform": wav_stats} if wav_stats else {}),
+    }
+
+
+def wav_audio_stats(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    try:
+        with wave.open(str(path), "rb") as handle:
+            channels = handle.getnchannels()
+            sample_width = handle.getsampwidth()
+            frame_rate = handle.getframerate()
+            frame_count = handle.getnframes()
+            max_frames = min(frame_count, max(frame_rate * 5, 1))
+            raw = handle.readframes(max_frames)
+    except Exception as exc:
+        return {"available": False, "error": str(exc)}
+    if not raw or sample_width not in {1, 2, 4}:
+        return {
+            "available": False,
+            "channels": channels,
+            "sample_width": sample_width,
+            "frame_rate": frame_rate,
+            "frame_count": frame_count,
+            "error": "unsupported_or_empty_wave_samples",
+        }
+    values: list[int] = []
+    for offset in range(0, len(raw) - sample_width + 1, sample_width):
+        chunk = raw[offset : offset + sample_width]
+        if sample_width == 1:
+            sample = int(chunk[0]) - 128
+            max_abs_value = 128
+        else:
+            sample = int.from_bytes(chunk, "little", signed=True)
+            max_abs_value = float(2 ** (8 * sample_width - 1))
+        values.append(sample)
+    if not values:
+        return {"available": False, "error": "no_wave_samples_decoded"}
+    square_sum = sum(float(value) * float(value) for value in values)
+    rms = (square_sum / len(values)) ** 0.5
+    peak = max(abs(value) for value in values)
+    rms_normalized = float(rms) / float(max_abs_value)
+    peak_normalized = float(peak) / float(max_abs_value)
+    return {
+        "available": True,
+        "channels": channels,
+        "sample_width": sample_width,
+        "frame_rate": frame_rate,
+        "frame_count": frame_count,
+        "sampled_frames": max_frames,
+        "duration_seconds": round(frame_count / frame_rate, 3) if frame_rate else None,
+        "rms_normalized": round(rms_normalized, 6),
+        "peak_normalized": round(peak_normalized, 6),
+        "silence": rms_normalized < 0.001 and peak_normalized < 0.005,
+    }
+
+
+def audio_kind_from_tags(
+    ffprobe_metadata: dict[str, object] | None,
+    python_metadata: dict[str, object] | None,
+) -> str | None:
+    tag_text = " ".join(media_tag_tokens(ffprobe_metadata, python_metadata))
+    if not tag_text:
+        return None
+    music_markers = ("artist", "album", "genre", "track", "musicbrainz", "composer", "discnumber")
+    speech_markers = ("podcast", "audiobook", "spoken", "speech", "voice", "narrator")
+    if any(marker in tag_text for marker in speech_markers):
+        return "speech_unknown"
+    if any(marker in tag_text for marker in music_markers):
+        return "music_unknown"
+    return None
+
+
+def media_tag_tokens(
+    ffprobe_metadata: dict[str, object] | None,
+    python_metadata: dict[str, object] | None,
+) -> list[str]:
+    tokens: list[str] = []
+    if isinstance(ffprobe_metadata, dict):
+        fmt = ffprobe_metadata.get("format")
+        if isinstance(fmt, dict) and isinstance(fmt.get("tags"), dict):
+            for key, value in list(fmt["tags"].items())[:100]:
+                tokens.append(str(key).casefold())
+                tokens.append(str(value).casefold())
+    if isinstance(python_metadata, dict) and isinstance(python_metadata.get("tags"), dict):
+        for key, value in list(python_metadata["tags"].items())[:100]:
+            tokens.append(str(key).casefold())
+            tokens.append(str(value).casefold())
+    return tokens
+
+
+def audio_channels(
+    ffprobe_metadata: dict[str, object] | None,
+    python_metadata: dict[str, object] | None,
+) -> int | None:
+    if isinstance(ffprobe_metadata, dict):
+        streams = ffprobe_metadata.get("streams")
+        if isinstance(streams, list):
+            for stream in streams:
+                if isinstance(stream, dict) and stream.get("codec_type") == "audio":
+                    try:
+                        return int(stream.get("channels")) if stream.get("channels") is not None else None
+                    except (TypeError, ValueError):
+                        return None
+    if isinstance(python_metadata, dict):
+        try:
+            return int(python_metadata.get("channels")) if python_metadata.get("channels") is not None else None
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def media_stages(
@@ -421,7 +640,7 @@ def speech_stage_plan(
     elif not auto_invoke:
         plan["reason"] = "speech provider configured but auto_invoke=false"
     else:
-        plan["reason"] = "speech execution hook is configured; core package does not run model downloads in tests"
+        plan["reason"] = "speech execution hook is configured and will run without model downloads"
     return plan
 
 
@@ -473,6 +692,360 @@ def frame_dependent_reason(
     if not bool(frame_provider.get("auto_invoke", False)):
         return "frame sampling/analysis configured but auto_invoke=false"
     return f"frame {provider_name} execution hook configured"
+
+
+def run_frame_sampling_if_configured(
+    path: Path,
+    classification: Classification,
+    profile: dict[str, Any],
+    statuses: list[Any],
+    config: Any | None,
+) -> dict[str, Any]:
+    cfg = config_for_context(config)
+    provider = effective_provider(cfg, "video_frames")
+    status = next((item for item in statuses if item.name == "video_frames"), None)
+    max_frames = positive_int(provider.get("max_frames")) or 5
+    interval_seconds = positive_float(provider.get("interval_seconds")) or 10.0
+    timestamps = sample_timestamps(profile.get("duration_seconds"), max_frames, interval_seconds)
+    result: dict[str, Any] = {
+        "attempted": False,
+        "used": False,
+        "provider": getattr(provider, "name", "none"),
+        "mode": str(provider.get("mode", "interval") or "interval"),
+        "max_frames": max_frames,
+        "interval_seconds": interval_seconds,
+        "sample_timestamps_seconds": timestamps,
+        "sampled_frame_count": 0,
+        "sampled_frames": [],
+        "preserve_frames": bool(provider.get("preserve_frames", False)),
+        "warnings": [],
+        "reason": "",
+    }
+    if classification.rough_category != "video":
+        result["reason"] = "not_a_video_file"
+        return result
+    if not bool(provider.get("sample_frames", False)):
+        result["reason"] = "frame sampling disabled by video_frames provider config"
+        return result
+    if status is None or not status.available:
+        result["reason"] = getattr(status, "error", None) or "video frame provider unavailable"
+        return result
+    if not bool(provider.get("auto_invoke", False)):
+        result["reason"] = "video frame provider configured but auto_invoke=false"
+        return result
+    tool = resolve_external_tool(cfg, "ffmpeg")
+    ffmpeg_bin = str(tool.get("source") or "")
+    if not ffmpeg_bin:
+        result["reason"] = str(tool.get("error") or "ffmpeg executable not found")
+        return result
+    result["attempted"] = True
+    output_format = normalized_frame_format(provider.get("output_format", "png"))
+    timeout = int(provider.get("timeout_seconds", tool.get("timeout_seconds") or 120) or 120)
+    preserve = bool(provider.get("preserve_frames", False))
+    output_dir = str(provider.get("output_dir", provider.get("frame_output_dir", "")) or "")
+    if preserve:
+        workdir = Path(output_dir).expanduser() if output_dir else Path(tempfile.mkdtemp(prefix="all2text_frames_"))
+        workdir.mkdir(parents=True, exist_ok=True)
+        cleanup = None
+    else:
+        cleanup = tempfile.TemporaryDirectory(prefix="all2text_frames_")
+        workdir = Path(cleanup.name)
+    try:
+        if str(result["mode"]).casefold() == "keyframe":
+            frames, frame_warnings = extract_keyframes(
+                path,
+                ffmpeg_bin=ffmpeg_bin,
+                output_dir=workdir,
+                output_format=output_format,
+                max_frames=max_frames,
+                timeout_seconds=timeout,
+                preserve_paths=preserve,
+            )
+        else:
+            frames, frame_warnings = extract_interval_frames(
+                path,
+                ffmpeg_bin=ffmpeg_bin,
+                output_dir=workdir,
+                output_format=output_format,
+                timestamps=timestamps,
+                timeout_seconds=timeout,
+                preserve_paths=preserve,
+            )
+        result["warnings"].extend(frame_warnings)
+        result["sampled_frames"] = frames
+        result["sampled_frame_count"] = len(frames)
+        result["used"] = bool(frames)
+        result["reason"] = "ffmpeg_frame_sampling_completed" if frames else "ffmpeg_returned_no_frames"
+    finally:
+        if cleanup is not None:
+            cleanup.cleanup()
+            result["temporary_directory_cleaned"] = True
+        else:
+            result["temporary_directory_cleaned"] = False
+    return result
+
+
+def normalized_frame_format(value: Any) -> str:
+    output_format = str(value or "png").casefold().lstrip(".")
+    if output_format in {"jpg", "jpeg"}:
+        return "jpg"
+    if output_format in {"png", "webp"}:
+        return output_format
+    return "png"
+
+
+def extract_interval_frames(
+    path: Path,
+    *,
+    ffmpeg_bin: str,
+    output_dir: Path,
+    output_format: str,
+    timestamps: list[float],
+    timeout_seconds: int,
+    preserve_paths: bool,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    frames: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for index, timestamp in enumerate(timestamps, start=1):
+        frame_path = output_dir / f"frame_{index:03d}_{int(timestamp * 1000):09d}ms.{output_format}"
+        cmd = [
+            ffmpeg_bin,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{timestamp:.3f}",
+            "-i",
+            str(path),
+            "-frames:v",
+            "1",
+            "-an",
+            "-y",
+            str(frame_path),
+        ]
+        warning = run_ffmpeg_command(cmd, timeout_seconds=timeout_seconds)
+        if warning:
+            warnings.append(warning)
+        if frame_path.exists() and frame_path.stat().st_size > 0:
+            frames.append(frame_record(frame_path, timestamp=timestamp, preserve_path=preserve_paths))
+    return frames, warnings
+
+
+def extract_keyframes(
+    path: Path,
+    *,
+    ffmpeg_bin: str,
+    output_dir: Path,
+    output_format: str,
+    max_frames: int,
+    timeout_seconds: int,
+    preserve_paths: bool,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    pattern = output_dir / f"keyframe_%03d.{output_format}"
+    cmd = [
+        ffmpeg_bin,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-skip_frame",
+        "nokey",
+        "-i",
+        str(path),
+        "-vsync",
+        "0",
+        "-frames:v",
+        str(max_frames),
+        "-an",
+        "-y",
+        str(pattern),
+    ]
+    warnings = []
+    warning = run_ffmpeg_command(cmd, timeout_seconds=timeout_seconds)
+    if warning:
+        warnings.append(warning)
+    frames = [
+        frame_record(item, timestamp=None, preserve_path=preserve_paths)
+        for item in sorted(output_dir.glob(f"keyframe_*.{output_format}"))[:max_frames]
+        if item.stat().st_size > 0
+    ]
+    return frames, warnings
+
+
+def run_ffmpeg_command(cmd: list[str], *, timeout_seconds: int) -> str | None:
+    try:
+        completed = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except Exception as exc:
+        return f"ffmpeg_frame_extract_error:{exc}"
+    if completed.returncode != 0:
+        stderr = completed.stderr.strip().replace("\n", " ")[:1000]
+        return f"ffmpeg_frame_extract_exit_code:{completed.returncode}:{stderr}"
+    return None
+
+
+def frame_record(frame_path: Path, *, timestamp: float | None, preserve_path: bool) -> dict[str, Any]:
+    return {
+        "path": str(frame_path) if preserve_path else None,
+        "file_name": frame_path.name,
+        "timestamp_seconds": timestamp,
+        "size_bytes": frame_path.stat().st_size,
+        "path_preserved": preserve_path,
+    }
+
+
+def run_speech_if_configured(
+    path: Path,
+    classification: Classification,
+    profile: dict[str, Any],
+    statuses: list[Any],
+    config: Any | None,
+) -> dict[str, Any]:
+    cfg = config_for_context(config)
+    provider = effective_provider(cfg, "speech")
+    status = next((item for item in statuses if item.name == "speech"), None)
+    requested = any(
+        bool(provider.get(key, False))
+        for key in ("transcribe", "translate", "language_detection")
+    )
+    result: dict[str, Any] = {
+        "attempted": False,
+        "used": False,
+        "provider": getattr(provider, "name", "none"),
+        "text": "",
+        "language": None,
+        "segments": [],
+        "warnings": [],
+        "reason": "",
+    }
+    if classification.rough_category not in {"audio", "video"}:
+        result["reason"] = "not_audio_or_video"
+        return result
+    if not requested:
+        result["reason"] = "speech tasks disabled by provider config"
+        return result
+    if int(profile.get("audio_stream_count") or 0) <= 0:
+        result["reason"] = "no audio stream/profile evidence that speech is possible"
+        return result
+    if status is None or not status.available:
+        result["reason"] = getattr(status, "error", None) or "speech provider unavailable"
+        return result
+    if not bool(provider.get("auto_invoke", False)):
+        result["reason"] = "speech provider configured but auto_invoke=false"
+        return result
+    result["attempted"] = True
+    if provider.name == "faster_whisper":
+        return run_faster_whisper(path, provider, result)
+    if provider.name == "whisper_cpp":
+        return run_whisper_cpp(path, provider, result)
+    result["reason"] = f"{provider.name} speech execution adapter is not implemented"
+    return result
+
+
+def run_faster_whisper(path: Path, provider: Any, result: dict[str, Any]) -> dict[str, Any]:
+    model_ref = str(provider.get("model_path", "") or provider.get("model", "") or "")
+    model_path = Path(model_ref).expanduser()
+    if not model_ref or not model_path.exists():
+        result["reason"] = "faster-whisper model_path/model is not a local path; no download performed"
+        return result
+    try:
+        from faster_whisper import WhisperModel
+    except Exception as exc:
+        result["warnings"].append(f"faster_whisper_unavailable:{exc}")
+        result["reason"] = "faster-whisper Python package unavailable"
+        return result
+    try:
+        device = str(provider.get("device", "auto") or "auto")
+        if device == "auto":
+            device = "cpu"
+        compute_type = str(provider.get("compute_type", "default") or "default")
+        model = WhisperModel(str(model_path), device=device, compute_type=compute_type)
+        segments_iter, info = model.transcribe(
+            str(path),
+            beam_size=int(provider.get("beam_size", 1) or 1),
+            task="translate" if bool(provider.get("translate", False)) else "transcribe",
+            vad_filter=bool(provider.get("vad_filter", False)),
+        )
+        max_segments = int(provider.get("max_segments", 200) or 200)
+        segments = []
+        for segment in segments_iter:
+            if len(segments) >= max_segments:
+                break
+            text = str(getattr(segment, "text", "") or "").strip()
+            segments.append(
+                {
+                    "start": round(float(getattr(segment, "start", 0.0)), 3),
+                    "end": round(float(getattr(segment, "end", 0.0)), 3),
+                    "text": text,
+                }
+            )
+        text = " ".join(item["text"] for item in segments if item.get("text")).strip()
+        result.update(
+            {
+                "used": bool(text),
+                "text": text,
+                "language": getattr(info, "language", None),
+                "language_probability": round(float(getattr(info, "language_probability", 0.0)), 4)
+                if getattr(info, "language_probability", None) is not None
+                else None,
+                "duration": round(float(getattr(info, "duration", 0.0)), 3)
+                if getattr(info, "duration", None) is not None
+                else None,
+                "segments": segments,
+                "truncated": len(segments) >= max_segments,
+                "reason": "faster_whisper_transcription_completed" if text else "faster_whisper_returned_no_text",
+            }
+        )
+    except Exception as exc:
+        result["warnings"].append(f"faster_whisper_failed:{exc}")
+        result["reason"] = "faster-whisper execution failed"
+    return result
+
+
+def run_whisper_cpp(path: Path, provider: Any, result: dict[str, Any]) -> dict[str, Any]:
+    model_ref = str(provider.get("model_path", "") or provider.get("model", "") or "")
+    executable = str(provider.get("executable", "") or shutil.which("whisper-cli") or shutil.which("whisper.cpp") or shutil.which("main") or "")
+    if not executable:
+        result["reason"] = "whisper.cpp executable not found: whisper-cli or whisper.cpp"
+        return result
+    if not model_ref or not Path(model_ref).expanduser().exists():
+        result["reason"] = "whisper.cpp model_path/model is not a local path"
+        return result
+    with tempfile.TemporaryDirectory(prefix="all2text_whisper_cpp_") as tmpdir:
+        output_base = Path(tmpdir) / "transcript"
+        cmd = [
+            executable,
+            "-m",
+            str(Path(model_ref).expanduser()),
+            "-f",
+            str(path),
+            "-otxt",
+            "-of",
+            str(output_base),
+        ]
+        warning = run_ffmpeg_command(cmd, timeout_seconds=int(provider.get("timeout_seconds", 300) or 300))
+        if warning:
+            result["warnings"].append(warning.replace("ffmpeg_frame_extract", "whisper_cpp"))
+            result["reason"] = "whisper.cpp execution failed"
+            return result
+        transcript_path = output_base.with_suffix(".txt")
+        if transcript_path.exists():
+            text = transcript_path.read_text(encoding="utf-8", errors="replace").strip()
+        else:
+            text = ""
+    result.update(
+        {
+            "used": bool(text),
+            "text": text,
+            "segments": [],
+            "reason": "whisper_cpp_transcription_completed" if text else "whisper_cpp_returned_no_text",
+        }
+    )
+    return result
 
 
 def sample_timestamps(duration: Any, max_frames: int, interval_seconds: float) -> list[float]:

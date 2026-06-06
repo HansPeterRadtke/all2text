@@ -22,6 +22,8 @@ Core behavior:
 - provide explicit safe summaries and provider-route reports for binary and unsupported deep formats;
 - expose provider-family status for document OCR/layout, image routing, OCR, VLM, charts, audio,
   video, CAD/BIM, scientific/geospatial, and binary metadata without downloading model files;
+- run Tesseract OCR, ffprobe metadata, opt-in ffmpeg frame sampling, and configured local
+  faster-whisper or whisper.cpp speech hooks when the required local tools/models are present;
 - emit bounded schema metadata for installed CAD/scientific/geospatial/binary libraries without
   dumping arrays, rendering geometry, executing files, or inventing semantic conclusions;
 - generate `_conversion_manifest.json` and `_conversion_report.txt`.
@@ -115,7 +117,9 @@ Profiles are advanced safety overrides:
 
 The CLI prints a JSON summary that includes the active automatic settings, capability summary,
 missing optional Python libraries/tools, provider summary, and normal conversion counts. The
-manifest and report include full capability and provider tables.
+manifest and report include full capability/provider tables plus a compact
+`provider_execution_summary` separating installed Python providers, external tools, reachable
+endpoints, discovered model files, executable providers, contract-only providers, and blockers.
 
 The installed console command and module invocation are equivalent: `all2text ...` and `python -m all2text ...` both call the same CLI entry point.
 
@@ -191,7 +195,8 @@ Native core extraction:
   body, attachment metadata, and original message source preservation;
 - SQLite files are opened read-only when possible to list schema objects;
 - audio/video can include Python-only `mutagen` metadata when installed; `ffprobe` metadata is used
-  automatically when the executable is available and allowed.
+  automatically when the executable is available and allowed; ffmpeg frame sampling runs only when
+  the `video_frames` provider has `sample_frames=true` and `auto_invoke=true`.
 
 Safe placeholder coverage:
 
@@ -199,7 +204,9 @@ Safe placeholder coverage:
   binary geospatial, binary CAD, fonts, executables, disk images, unknown binaries, and specialist
   containers.
 
-Image and media outputs now include layered provider routing/status reports. Top-level manifests
+Tesseract OCR is real when `pytesseract` and the `tesseract` executable are available. OCR output is
+accepted only after configured confidence, minimum-character, and alphanumeric-ratio checks. Image
+and media outputs include layered provider routing/status reports. Top-level manifests
 also include configured provider statuses and capability status, so disabled/unavailable local
 llama.cpp, OCR, chart, audio classifier, speech, diarization, shell tools, Python optional
 libraries, CAD/scientific/geospatial/binary metadata probes, and video-frame routes are visible even
@@ -266,6 +273,11 @@ Detailed docs:
 - [Operational log](docs/operational-log.md)
 - [Bootstrap report](docs/final-report.md)
 - [Open-source extraction research](docs/open-source-extraction-research-2026.md)
+
+Current Jetson blocker note: `python -m pip install docling` reported no matching distribution in the
+active Python environment, so the Docling adapter remains gated by dependency availability. It will
+run only when configured with `providers.document_intelligence.name="docling"` and
+`auto_invoke=true`.
 
 Scientific extras use Python-version markers so older supported Python runtimes receive compatible package versions where upstream wheels exist.
 

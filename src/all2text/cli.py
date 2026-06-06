@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from all2text.api import run
-from all2text.capabilities import capability_report
+from all2text.capabilities import capability_report, provider_execution_summary
 from all2text.config import PROFILE_DEFAULTS, load_config, options_with_profile
 from all2text.install_help import install_tools_guidance
 from all2text.jsonsafe import json_dumps
@@ -81,10 +81,15 @@ def main(argv: list[str] | None = None) -> int:
     config = config.with_options(options)
     if args.capabilities:
         report = capability_report(config)
-        report["provider_statuses"] = [status.to_dict() for status in provider_statuses(config)]
-        report["provider_family_statuses"] = [
-            status.to_dict() for status in provider_family_statuses(config)
-        ]
+        configured_statuses = [status.to_dict() for status in provider_statuses(config)]
+        family_statuses = [status.to_dict() for status in provider_family_statuses(config)]
+        report["provider_statuses"] = configured_statuses
+        report["provider_family_statuses"] = family_statuses
+        report["provider_execution_summary"] = provider_execution_summary(
+            report,
+            configured_statuses,
+            family_statuses,
+        )
         print(json_dumps(report, indent=2))
         return 0
     if not args.source_folder or not args.target_folder:

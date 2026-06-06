@@ -181,6 +181,20 @@ def render_report(manifest: dict[str, Any]) -> str:
                 f"- {status.get('name')}: enabled={status.get('enabled')} "
                 f"available={status.get('available')} error={status.get('error')}"
             )
+    if manifest.get("provider_execution_summary"):
+        execution = manifest["provider_execution_summary"]
+        lines.extend(["", "Provider execution summary:"])
+        for key in (
+            "installed_python_providers",
+            "installed_python_contract_only",
+            "reachable_endpoints",
+            "locally_discovered_model_files",
+            "implemented_and_executable_providers",
+            "contract_only_providers",
+        ):
+            lines.append(f"- {key}: {execution.get(key, [])}")
+        blockers = execution.get("blockers", [])
+        lines.append(f"- blocker_count: {len(blockers) if isinstance(blockers, list) else 0}")
     if manifest.get("provider_family_statuses"):
         lines.extend(["", "Provider family statuses:"])
         for status in manifest["provider_family_statuses"]:

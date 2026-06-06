@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from all2text import run
-from all2text.backends.media import limit_ffprobe_metadata
+from all2text.backends.media import limit_ffprobe_metadata, run_frame_sampling_if_configured
 from all2text.cli import main
 from all2text.config import config_from_dict, options_with_profile
+from all2text.models import Classification, LayerEvidence
+from all2text.providers import provider_statuses
 from tests.conftest import PNG_1X1, entry, make_options
 
 
@@ -293,6 +297,121 @@ def test_video_frame_provider_plan_is_recorded_without_running_ffmpeg(tmp_path: 
     assert stages["frame_sampling"]["output_format"] == "jpg"
     assert stages["frame_ocr"]["planned"] is True
     assert stages["frame_vlm"]["planned"] is True
+
+
+def _classification(category: str, fmt: str) -> Classification:
+    empty = LayerEvidence(source="test")
+    return Classification(
+        extension_hint=empty,
+        name_hint=empty,
+        mime_hint=empty,
+        content_signature=empty,
+        rough_category=category,
+        concrete_format=fmt,
+        content_profile="test",
+        confidence="strong",
+    )
+
+
+def test_ffmpeg_frame_sampling_mock_cleans_temp_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ffmpeg = tmp_path / "ffmpeg"
+    ffmpeg.write_text("#!/bin/sh\n", encoding="utf-8")
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"fake")
+    config = config_from_dict(
+        {
+            "tools": {"ffmpeg": {"path": str(ffmpeg)}},
+            "providers": {
+                "video_frames": {
+                    "name": "ffmpeg",
+                    "enabled": True,
+                    "sample_frames": True,
+                    "max_frames": 1,
+                    "interval_seconds": 1,
+                    "auto_invoke": True,
+                }
+            },
+        }
+    )
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        Path(cmd[-1]).write_bytes(b"frame")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr("all2text.backends.media.subprocess.run", fake_run)
+
+    result = run_frame_sampling_if_configured(
+        clip,
+        _classification("video", "MP4"),
+        {"duration_seconds": 1.0},
+        provider_statuses(config, family="video"),
+        config,
+    )
+
+    assert result["attempted"] is True
+    assert result["used"] is True
+    assert result["sampled_frame_count"] == 1
+    assert result["sampled_frames"][0]["path"] is None
+    assert result["temporary_directory_cleaned"] is True
+
+
+def test_real_ffmpeg_frame_sampling_smoke_when_available(tmp_path: Path) -> None:
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg executable is not installed")
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    clip = source / "clip.mp4"
+    completed = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=1:size=64x64:rate=1",
+            "-frames:v",
+            "1",
+            "-pix_fmt",
+            "yuv420p",
+            "-y",
+            str(clip),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        pytest.skip(f"ffmpeg could not generate tiny fixture: {completed.stderr.strip()}")
+    config = config_from_dict(
+        {
+            "providers": {
+                "video_frames": {
+                    "name": "ffmpeg",
+                    "enabled": True,
+                    "sample_frames": True,
+                    "max_frames": 1,
+                    "interval_seconds": 1,
+                    "auto_invoke": True,
+                }
+            }
+        }
+    )
+
+    manifest = run(source, target, options=options_with_profile(make_options(), "tools"), config=config)
+
+    sampling = entry(manifest, "clip.mp4")["converter_metadata"]["frame_sampling"]
+    assert sampling["attempted"] is True
+    assert sampling["used"] is True
+    assert sampling["sampled_frame_count"] == 1
+    assert sampling["sampled_frames"][0]["path"] is None
+    assert sampling["temporary_directory_cleaned"] is True
 
 
 def test_ffprobe_metadata_preview_is_bounded_for_manifest_safety() -> None:

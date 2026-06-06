@@ -95,8 +95,8 @@ DEFAULT_MODULES: dict[str, str] = {
     "audio": "media_analysis_backend",
     "video": "media_analysis_backend",
     "scientific_data": "scientific_placeholder_backend",
-    "geospatial": "text_exact_backend",
-    "cad_or_technical": "text_exact_backend",
+    "geospatial": "geospatial_placeholder_backend",
+    "cad_or_technical": "cad_placeholder_backend",
     "font": "font_placeholder_backend",
     "executable_or_binary": "executable_placeholder_backend",
     "disk_image_or_container": "container_placeholder_backend",
@@ -330,7 +330,7 @@ PROVIDER_BOOL_PARAMS: dict[str, set[str]] = {
     "document_intelligence": {"auto_invoke"},
     "scientific": {"auto_invoke"},
     "speech": {"transcribe", "translate", "language_detection", "auto_invoke"},
-    "video_frames": {"sample_frames", "auto_invoke", "ocr", "vlm"},
+    "video_frames": {"sample_frames", "auto_invoke", "ocr", "vlm", "preserve_frames"},
 }
 
 
@@ -455,6 +455,7 @@ DEFAULT_PROVIDERS: dict[str, ProviderConfig] = {
             "auto_invoke": False,
             "ocr": False,
             "vlm": False,
+            "preserve_frames": False,
         },
     ),
     "cad": ProviderConfig(

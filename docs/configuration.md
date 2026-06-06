@@ -90,8 +90,9 @@ video = "media_analysis_backend"
 ```
 
 The registry still verifies that a selected backend can handle the classified entry. If it cannot,
-selection falls back through the normal ordered registry. This lets text GeoJSON or text CAD stay
-exactly preserved while binary variants fall through to safe placeholders.
+selection falls back through the normal ordered registry. The default geospatial and CAD backends
+emit safe schema metadata and preserve source text for textual variants such as GeoJSON, KML, and
+DXF.
 
 Backend names are validated when the config is loaded. A typo such as
 `image = "image_analysis_backned"` raises a `ValueError` instead of silently using another backend.
@@ -157,7 +158,7 @@ preprocess = "none"
 min_characters = 4
 min_alnum_ratio = 0.35
 min_confidence = 35
-auto_invoke = false
+auto_invoke = true
 
 [providers.vlm]
 name = "openai_compatible"
@@ -208,29 +209,42 @@ timeout_seconds = 15
 enabled = false
 ```
 
-Known tool keys are `file`, `getfacl`, `ffprobe`, `ffmpeg`, `tesseract`, and `libreoffice`.
+Known tool keys are `file`, `getfacl`, `ffprobe`, `ffmpeg`, `tesseract`, `libreoffice`,
+`whisper_cpp`, `radare2`, and `capa`.
 Missing tools are reported in the manifest/report/stdout capability summary and do not fail normal
 conversion.
 
 Current core provider behavior:
 
-- OCR: Tesseract can be invoked when explicitly enabled and available.
+- OCR: Tesseract is invoked when enabled, allowed by profile, and available. The backend uses
+  `pytesseract` plus the `tesseract` executable, records language/config/timeout, and accepts text
+  only after configured confidence, minimum-character, and alphanumeric-ratio checks.
 - VLM: OpenAI-compatible HTTP vision calls can be invoked when explicitly enabled.
-- Image route classification, chart, document intelligence, audio classifier, speech, diarization,
-  video frame, CAD, scientific, geospatial, and binary metadata providers expose status and routing
-  hooks. Heavy model-backed adapters remain contract-only unless explicitly implemented and
-  configured.
+- Image route classification, chart, audio classifier, diarization, CAD, scientific, geospatial, and
+  binary metadata providers expose status and routing hooks. Heavy model-backed adapters remain
+  contract-only unless explicitly implemented and configured.
+- Document intelligence: a Docling adapter is present, but it runs only when the `docling` Python
+  package imports successfully, the provider is configured as `docling`, and `auto_invoke=true`. On
+  the current Jetson Python, `python -m pip install docling` reports no matching distribution, so
+  doctor reports an explicit dependency blocker.
 - Video frame settings (`sample_frames`, `max_frames`, `interval_seconds`, `output_format`, `ocr`,
-  and `vlm`) are reflected in per-video stage plans even when `auto_invoke=false`, so downstream
-  jobs can see exactly what would run and why it did not.
+  `vlm`, and `preserve_frames`) are reflected in per-video stage plans. When `sample_frames=true`,
+  `auto_invoke=true`, and ffmpeg is available, frames are actually sampled into a temporary runtime
+  directory. Paths are omitted and files are cleaned unless `preserve_frames=true` is explicitly
+  configured.
 - Speech settings (`transcribe`, `translate`, `language_detection`, `model_path`, `device`,
-  `timeout_seconds`) are reflected in audio/video stage plans with clear provider blockers.
+  `timeout_seconds`) are reflected in audio/video stage plans with clear provider blockers. The
+  faster-whisper and whisper.cpp hooks execute only with a configured local model path; model ids
+  are not downloaded implicitly.
 - Audio classifier settings expose the route for `speech|music|noise|mixed|unknown` classification.
+  The media backend also records a deterministic metadata-only audio kind such as `silence`,
+  `very_short`, `speech_unknown`, `music_unknown`, `mixed_unknown`, or `unknown_audio_content`.
   Diarization settings expose the planned speaker-turn schema. Neither fabricates labels or
   transcripts when the configured model/provider is absent.
 - CAD/scientific/geospatial/binary metadata providers are schema-only. They may use installed
   libraries such as `ezdxf`, `h5py`, `netCDF4`, `astropy`, `pyarrow`, `pyshp`, `pefile`,
-  `macholib`, or `lief`, but they do not execute files, render geometry, or dump large arrays.
+  `macholib`, `shapely`, `pyproj`, or `lief`, but they do not execute files, render geometry, or
+  dump large arrays.
 
 Custom keys are preserved in provider `params`, so local deployments can add model paths,
 temperature, prompt policy, tenant IDs, or tool-specific settings without changing the schema.
@@ -247,11 +261,17 @@ pefile/macholib/LIEF/capa/radare2. Each row reports lifecycle flags such as `con
 `auto_detected`, `dependency_found`, `executable_found`, `endpoint_reachable`, `attempted`,
 `used`, `skipped`, `failed`, `disabled`, `missing`, and `error`.
 
+`provider_execution_summary` is a compact view over the same data. It separates installed Python
+providers, installed-but-contract-only libraries, external tools, reachable OpenAI-compatible
+endpoints, local model file matches, implemented/executable providers, contract-only providers, and
+blockers.
+
 The top-level manifest also includes `capabilities`, which lists:
 
 - active automatic settings and safety gates;
 - available/missing optional Python libraries;
 - external tool status, including configured paths, disabled states, and executable-not-found states;
+- discovered model-file matches under configured model roots;
 - a compact summary copied into stdout and `_conversion_report.txt`.
 
 ## Truthfulness
@@ -304,4 +324,5 @@ Provider blockers observed on Jetson:
   Installing torchaudio over NVIDIA's Jetson Torch build is not considered safe by default.
 - Docling/PaddleOCR-VL/GLM-OCR/olmOCR/ChartGemma/UniChart/DePlot/faster-whisper model weights are
   external. Put them outside the repo, for example under `/data/models`, and configure `model_path`
-  or a local endpoint. Do not commit model files or runtime caches.
+  or a local endpoint. The faster-whisper hook requires that local path and will not download a
+  model id implicitly. Do not commit model files or runtime caches.
