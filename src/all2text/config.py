@@ -191,6 +191,8 @@ PROFILE_ALIASES = {
 }
 
 PROVIDER_PROFILE_REQUIREMENTS: dict[str, str] = {
+    "audio_classifier": "local_models",
+    "diarization": "local_models",
     "ocr": "external_tools",
     "vlm": "local_models",
     "llm_text": "local_models",
@@ -220,12 +222,19 @@ KNOWN_BACKEND_NAMES = {
 }
 
 ALLOWED_PROVIDER_NAMES: dict[str, set[str]] = {
-    "ocr": {"none", "tesseract"},
+    "audio_classifier": {"none", "yamnet", "panns", "openbeats", "clap"},
+    "binary_metadata": {"none", "pefile", "macholib", "lief", "capa", "radare2", "file"},
+    "cad": {"none", "ezdxf", "ifcopenshell"},
+    "diarization": {"none", "pyannote", "diarizen", "nemo"},
+    "geospatial": {"none", "pyshp", "pyproj", "shapely"},
+    "image_classifier": {"none", "clip", "open_clip", "siglip", "siglip2"},
+    "ocr": {"none", "tesseract", "paddleocr", "surya"},
     "vlm": {"none", "openai_compatible"},
     "llm_text": {"none", "openai_compatible"},
-    "chart": {"none", "deplot", "chartgemma", "unichart"},
-    "document_intelligence": {"none"},
-    "speech": {"none", "whisper", "faster_whisper", "vosk"},
+    "chart": {"none", "deplot", "chartgemma", "unichart", "chartcoder", "chartocr"},
+    "document_intelligence": {"none", "docling", "paddleocr_vl", "glm_ocr", "olmocr"},
+    "scientific": {"none", "h5py", "h5netcdf", "netcdf4", "astropy", "pyarrow", "scipy", "numpy"},
+    "speech": {"none", "whisper", "whisper_cpp", "faster_whisper", "vosk", "parakeet", "canary"},
     "video_frames": {"none", "ffmpeg"},
 }
 
@@ -249,12 +258,15 @@ RUN_OPTION_BOOL_FIELDS = {
 }
 
 KNOWN_TOOL_NAMES = {
+    "capa",
     "ffmpeg",
     "ffprobe",
     "file",
     "getfacl",
     "libreoffice",
+    "radare2",
     "tesseract",
+    "whisper_cpp",
 }
 
 TOOL_BOOL_PARAMS = {"enabled"}
@@ -273,10 +285,18 @@ MODULE_BOOL_PARAMS = {
 }
 
 PROVIDER_POSITIVE_INT_PARAMS: dict[str, set[str]] = {
+    "audio_classifier": {"timeout_seconds"},
+    "binary_metadata": {"timeout_seconds", "max_strings"},
+    "cad": {"timeout_seconds"},
+    "chart": {"timeout_seconds"},
+    "diarization": {"timeout_seconds"},
+    "geospatial": {"timeout_seconds"},
+    "image_classifier": {"timeout_seconds"},
     "ocr": {"timeout_seconds", "min_characters"},
     "vlm": {"timeout_seconds", "max_tokens"},
     "llm_text": {"timeout_seconds", "max_tokens"},
     "document_intelligence": {"timeout_seconds"},
+    "scientific": {"timeout_seconds"},
     "speech": {"timeout_seconds"},
     "video_frames": {"timeout_seconds", "max_frames"},
 }
@@ -297,17 +317,34 @@ PROVIDER_PERCENT_PARAMS: dict[str, set[str]] = {
 }
 
 PROVIDER_BOOL_PARAMS: dict[str, set[str]] = {
+    "audio_classifier": {"auto_invoke"},
+    "binary_metadata": {"auto_invoke"},
+    "cad": {"auto_invoke"},
+    "diarization": {"auto_invoke"},
+    "geospatial": {"auto_invoke"},
+    "image_classifier": {"auto_invoke"},
     "ocr": {"auto_invoke"},
     "vlm": {"auto_detect", "auto_invoke"},
     "llm_text": {"auto_detect", "auto_invoke"},
-    "chart": {"embedded_images_enabled"},
+    "chart": {"embedded_images_enabled", "auto_invoke"},
     "document_intelligence": {"auto_invoke"},
+    "scientific": {"auto_invoke"},
     "speech": {"transcribe", "translate", "language_detection", "auto_invoke"},
     "video_frames": {"sample_frames", "auto_invoke", "ocr", "vlm"},
 }
 
 
 DEFAULT_PROVIDERS: dict[str, ProviderConfig] = {
+    "image_classifier": ProviderConfig(
+        name="none",
+        enabled=False,
+        params={
+            "model_path": "",
+            "labels": "default",
+            "timeout_seconds": 120,
+            "auto_invoke": False,
+        },
+    ),
     "ocr": ProviderConfig(
         name="tesseract",
         enabled=True,
@@ -359,6 +396,8 @@ DEFAULT_PROVIDERS: dict[str, ProviderConfig] = {
             "model_path": "",
             "embedded_images_enabled": False,
             "confidence_threshold": 0.6,
+            "timeout_seconds": 120,
+            "auto_invoke": False,
         },
     ),
     "document_intelligence": ProviderConfig(
@@ -371,6 +410,16 @@ DEFAULT_PROVIDERS: dict[str, ProviderConfig] = {
             "auto_invoke": False,
         },
     ),
+    "audio_classifier": ProviderConfig(
+        name="none",
+        enabled=False,
+        params={
+            "model_path": "",
+            "labels": "speech,music,noise,mixed,unknown",
+            "timeout_seconds": 120,
+            "auto_invoke": False,
+        },
+    ),
     "speech": ProviderConfig(
         name="none",
         enabled=False,
@@ -378,6 +427,16 @@ DEFAULT_PROVIDERS: dict[str, ProviderConfig] = {
             "transcribe": False,
             "translate": False,
             "language_detection": False,
+            "model_path": "",
+            "device": "auto",
+            "timeout_seconds": 300,
+            "auto_invoke": False,
+        },
+    ),
+    "diarization": ProviderConfig(
+        name="none",
+        enabled=False,
+        params={
             "model_path": "",
             "device": "auto",
             "timeout_seconds": 300,
@@ -397,6 +456,26 @@ DEFAULT_PROVIDERS: dict[str, ProviderConfig] = {
             "ocr": False,
             "vlm": False,
         },
+    ),
+    "cad": ProviderConfig(
+        name="none",
+        enabled=False,
+        params={"timeout_seconds": 120, "auto_invoke": False},
+    ),
+    "scientific": ProviderConfig(
+        name="none",
+        enabled=False,
+        params={"timeout_seconds": 120, "auto_invoke": False},
+    ),
+    "geospatial": ProviderConfig(
+        name="none",
+        enabled=False,
+        params={"timeout_seconds": 120, "auto_invoke": False},
+    ),
+    "binary_metadata": ProviderConfig(
+        name="none",
+        enabled=False,
+        params={"timeout_seconds": 120, "max_strings": 100, "auto_invoke": False},
     ),
 }
 

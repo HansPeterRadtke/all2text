@@ -8,33 +8,46 @@ from all2text.config import All2TextConfig, config_for_context
 
 
 OPTIONAL_PYTHON_LIBRARIES: list[dict[str, Any]] = [
+    {"name": "astropy", "module": "astropy", "extra": "scientific", "implemented_in_core": True},
     {"name": "beautifulsoup4", "module": "bs4", "extra": "documents", "implemented_in_core": False},
+    {"name": "docling", "module": "docling", "extra": "document-ocr", "implemented_in_core": False},
     {"name": "ebooklib", "module": "ebooklib", "extra": "documents", "implemented_in_core": False},
+    {"name": "faster-whisper", "module": "faster_whisper", "extra": "audio", "implemented_in_core": False},
     {"name": "fonttools", "module": "fontTools", "extra": "fonts", "implemented_in_core": False},
-    {"name": "h5py", "module": "h5py", "extra": "scientific", "implemented_in_core": False},
+    {"name": "h5netcdf", "module": "h5netcdf", "extra": "scientific", "implemented_in_core": False},
+    {"name": "h5py", "module": "h5py", "extra": "scientific", "implemented_in_core": True},
+    {"name": "IfcOpenShell", "module": "ifcopenshell", "extra": "cad", "implemented_in_core": True},
+    {"name": "LIEF", "module": "lief", "extra": "executables", "implemented_in_core": False},
     {"name": "markitdown", "module": "markitdown", "extra": "markitdown", "implemented_in_core": False},
+    {"name": "macholib", "module": "macholib", "extra": "executables", "implemented_in_core": True},
     {"name": "mutagen", "module": "mutagen", "extra": "media", "implemented_in_core": True},
-    {"name": "netCDF4", "module": "netCDF4", "extra": "scientific", "implemented_in_core": False},
-    {"name": "numpy", "module": "numpy", "extra": "scientific", "implemented_in_core": False},
+    {"name": "netCDF4", "module": "netCDF4", "extra": "scientific", "implemented_in_core": True},
+    {"name": "numpy", "module": "numpy", "extra": "scientific", "implemented_in_core": True},
     {"name": "odfpy", "module": "odf", "extra": "documents", "implemented_in_core": False},
     {"name": "openpyxl", "module": "openpyxl", "extra": "documents", "implemented_in_core": True},
-    {"name": "pefile", "module": "pefile", "extra": "executables", "implemented_in_core": False},
+    {"name": "opencv-python", "module": "cv2", "extra": "video", "implemented_in_core": True},
+    {"name": "PaddleOCR", "module": "paddleocr", "extra": "document-ocr", "implemented_in_core": False},
+    {"name": "pefile", "module": "pefile", "extra": "executables", "implemented_in_core": True},
     {"name": "piexif", "module": "piexif", "extra": "images", "implemented_in_core": False},
     {"name": "Pillow", "module": "PIL", "extra": "images", "implemented_in_core": True},
     {"name": "py7zr", "module": "py7zr", "extra": "archives", "implemented_in_core": False},
-    {"name": "pyarrow", "module": "pyarrow", "extra": "scientific", "implemented_in_core": False},
+    {"name": "pyannote.audio", "module": "pyannote.audio", "extra": "audio", "implemented_in_core": False},
+    {"name": "pyarrow", "module": "pyarrow", "extra": "scientific", "implemented_in_core": True},
     {"name": "pypdf", "module": "pypdf", "extra": "documents", "implemented_in_core": True},
     {"name": "pyproj", "module": "pyproj", "extra": "geospatial", "implemented_in_core": False},
-    {"name": "pyshp", "module": "shapefile", "extra": "geospatial", "implemented_in_core": False},
+    {"name": "pyshp", "module": "shapefile", "extra": "geospatial", "implemented_in_core": True},
     {"name": "pytesseract", "module": "pytesseract", "extra": "ocr", "implemented_in_core": True},
     {"name": "python-docx", "module": "docx", "extra": "documents", "implemented_in_core": True},
     {"name": "python-pptx", "module": "pptx", "extra": "documents", "implemented_in_core": True},
     {"name": "rarfile", "module": "rarfile", "extra": "archives", "implemented_in_core": False},
-    {"name": "scipy", "module": "scipy", "extra": "scientific", "implemented_in_core": False},
+    {"name": "scipy", "module": "scipy", "extra": "scientific", "implemented_in_core": True},
     {"name": "shapely", "module": "shapely", "extra": "geospatial", "implemented_in_core": False},
     {"name": "textract", "module": "textract", "extra": "legacy-textract", "implemented_in_core": False},
     {"name": "xlrd", "module": "xlrd", "extra": "documents", "implemented_in_core": True},
-    {"name": "ezdxf", "module": "ezdxf", "extra": "cad", "implemented_in_core": False},
+    {"name": "torch", "module": "torch", "extra": "models", "implemented_in_core": False},
+    {"name": "transformers", "module": "transformers", "extra": "models", "implemented_in_core": False},
+    {"name": "whisper", "module": "whisper", "extra": "audio", "implemented_in_core": False},
+    {"name": "ezdxf", "module": "ezdxf", "extra": "cad", "implemented_in_core": True},
 ]
 
 EXTERNAL_TOOLS: list[dict[str, Any]] = [
@@ -44,6 +57,9 @@ EXTERNAL_TOOLS: list[dict[str, Any]] = [
     {"name": "tesseract", "executable": "tesseract", "used_by_core": True},
     {"name": "getfacl", "executable": "getfacl", "used_by_core": True},
     {"name": "libreoffice", "executable": "libreoffice", "used_by_core": False},
+    {"name": "whisper_cpp", "executable": "whisper-cli", "used_by_core": False},
+    {"name": "radare2", "executable": "radare2", "used_by_core": False},
+    {"name": "capa", "executable": "capa", "used_by_core": False},
 ]
 
 
@@ -72,7 +88,7 @@ def capability_report(config: object | None) -> dict[str, Any]:
 def optional_python_statuses(config: All2TextConfig) -> list[dict[str, Any]]:
     statuses: list[dict[str, Any]] = []
     for item in OPTIONAL_PYTHON_LIBRARIES:
-        available = importlib.util.find_spec(str(item["module"])) is not None
+        available = python_module_available(str(item["module"]))
         enabled = bool(config.options.allow_optional_python and config.options.auto_detect_python)
         error = None
         if not config.options.allow_optional_python:
@@ -95,6 +111,13 @@ def optional_python_statuses(config: All2TextConfig) -> list[dict[str, Any]]:
             }
         )
     return statuses
+
+
+def python_module_available(module: str) -> bool:
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
 
 
 def external_tool_statuses(config: All2TextConfig) -> list[dict[str, Any]]:
@@ -123,7 +146,11 @@ def external_tool_statuses(config: All2TextConfig) -> list[dict[str, Any]]:
 def resolve_external_tool(config: object | None, name: str) -> dict[str, Any]:
     cfg = config_for_context(config)
     configured = cfg.tool(name)
-    executable = configured.executable or name
+    default_executable = next(
+        (str(item["executable"]) for item in EXTERNAL_TOOLS if item["name"] == name),
+        name,
+    )
+    executable = configured.executable or default_executable
     configured_path = configured.path or ""
     enabled = tool_enabled(cfg, name)
     source = None

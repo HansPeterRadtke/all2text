@@ -32,11 +32,11 @@ extracts.
 | Audio | WAV, MP3, FLAC, OGG, AAC, MIDI | Records media profile, optional Python `mutagen` metadata, optional `ffprobe` when detected/allowed, speech/language/transcription/translation provider stages, and truthful blockers. |
 | Video | MP4, MOV, MKV, AVI, WebM | Records media profile, optional Python `mutagen` metadata, optional `ffprobe` when detected/allowed, subtitles count, configured frame sampling/OCR/VLM stage plans, audio transcription hooks, and truthful blockers. |
 | Documents without native parser | DOC, malformed office/PDF files, XLS without `xlrd` | Safe summary with dependency/parser warning. |
-| Scientific data | HDF5, NetCDF, Parquet, FITS, MAT, NPY/NPZ | Safe byte/string summary. No dataset traversal in core. |
-| Binary geospatial | Shapefile, GeoPackage, raster/sidecar geospatial formats | Safe byte/string summary. No GDAL/Fiona/Rasterio inspection in core. |
-| Binary CAD | DWG and other non-text CAD | Safe summary. No geometry/layer extraction. |
+| Scientific data | HDF5, NetCDF, Parquet, FITS, MAT, NPY/NPZ | Safe byte/string summary plus bounded schema probes when installed libraries are available: NumPy for NPY/NPZ, h5py for HDF5, netCDF4 for NetCDF, astropy for FITS, pyarrow for Parquet, scipy for MAT. Array values are not dumped. |
+| Binary geospatial | Shapefile, GeoPackage, raster/sidecar geospatial formats | Safe byte/string summary plus bounded pyshp/SQLite GeoPackage schema metadata when available. No coordinate transformation, feature dump, or raster dump. |
+| Binary CAD | DWG and other non-text CAD | Safe summary plus bounded ezdxf/IfcOpenShell schema metadata when available. No rendering, geometry dump, macro execution, or engineering interpretation. |
 | Fonts | TTF, OTF, WOFF, WOFF2 | Safe summary. No glyph tables. |
-| Executables | ELF, PE/MZ, Mach-O, shared libraries | Safe summary. No execution, disassembly, or decompilation. |
+| Executables | ELF, PE/MZ, Mach-O, shared libraries | Safe summary plus bounded ELF header parsing and optional pefile/macholib metadata. No execution, disassembly, decompilation, unpacking, or behavioral claims. |
 | Containers | ISO, DMG, VHD, QCOW2 | Safe summary. No mounting or filesystem traversal. |
 | Unknown binary | Any unmapped binary | Header and printable string samples. |
 
@@ -65,7 +65,9 @@ scientific, font, executable, and disk-image formats all produce useful metadata
 semantic extraction beyond what the backend actually performed.
 
 The top-level manifest also records capability and provider statuses for configured OCR, VLM/local
-llama.cpp, chart, document-intelligence, speech, shell-tool, Python-library, and video-frame routes.
-This makes a run auditable even when no file happened to exercise a provider family. It also records
+llama.cpp, chart, document-intelligence, audio classifier, speech, diarization, shell-tool,
+Python-library, CAD/scientific/geospatial/binary metadata, and video-frame routes. It also records
+`provider_family_statuses`, a broader catalog of researched provider candidates and blockers. This
+makes a run auditable even when no file happened to exercise a provider family. It also records
 module statuses so configured extraction routes that had no matching files, or were not selected for
 matching files, are explicit.

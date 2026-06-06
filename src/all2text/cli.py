@@ -9,7 +9,7 @@ from all2text.capabilities import capability_report
 from all2text.config import PROFILE_DEFAULTS, load_config, options_with_profile
 from all2text.install_help import install_tools_guidance
 from all2text.jsonsafe import json_dumps
-from all2text.providers import provider_statuses
+from all2text.providers import provider_family_statuses, provider_statuses
 from all2text.version import __version__
 
 
@@ -82,6 +82,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.capabilities:
         report = capability_report(config)
         report["provider_statuses"] = [status.to_dict() for status in provider_statuses(config)]
+        report["provider_family_statuses"] = [
+            status.to_dict() for status in provider_family_statuses(config)
+        ]
         print(json_dumps(report, indent=2))
         return 0
     if not args.source_folder or not args.target_folder:

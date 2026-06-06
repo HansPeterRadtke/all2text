@@ -82,21 +82,7 @@ class ImageAnalysisBackend:
         if vlm_used:
             methods.append("openai_compatible_vlm_caption")
 
-        chart_analysis = {
-            "candidate": chart_candidate,
-            "attempted": False,
-            "used": False,
-            "status": next((status.to_dict() for status in statuses if status.name == "chart"), None),
-            "evidence": {
-                "profile": profile.get("profile"),
-                "dimensions": profile.get("dimensions"),
-                "dominant_color_names": profile.get("dominant_color_names"),
-            },
-            "limitations": [
-                "No chart specialist provider produced table/series values.",
-                "Geometry/profile evidence is reported without invented chart labels or values.",
-            ],
-        }
+        chart_analysis = build_chart_analysis_schema(profile, statuses, candidate=chart_candidate)
         document_hooks = {
             "document_intelligence": next((status.to_dict() for status in statuses if status.name == "document_intelligence"), None),
             "screenshot_or_document_candidate": route.family in {"document", "screenshot"},
@@ -203,6 +189,7 @@ def image_profile(
     dominant: list[str] = []
     non_white_ratio = None
     color_count_estimate = None
+    structure: dict[str, Any] = {}
     if not allow_optional_python:
         if fmt not in {"SVG"}:
             reason = optional_python_disabled_reason or f"disabled_by_profile:{profile_name}"
@@ -216,6 +203,7 @@ def image_profile(
                 width, height = pil_image.size
                 mode = opened.mode
                 dominant, non_white_ratio, color_count_estimate = sampled_color_profile(pil_image)
+                structure = image_structure_profile(pil_image)
         except Exception as exc:
             if fmt not in {"SVG"}:
                 warnings.append(f"pil_image_profile_unavailable:{exc}")
@@ -228,12 +216,17 @@ def image_profile(
         aspect=aspect,
         non_white_ratio=non_white_ratio,
         color_count_estimate=color_count_estimate,
+        structure=structure,
         path=path,
     )
-    chart_candidate = profile in {"chart_or_plot_candidate", "technical_chart_or_diagram_candidate"}
+    chart_candidate = bool(profile.get("chart_candidate"))
     return (
         {
-            "profile": profile,
+            "profile": profile.get("profile"),
+            "taxonomy": profile.get("taxonomy"),
+            "taxonomy_source": profile.get("taxonomy_source"),
+            "taxonomy_evidence": profile.get("taxonomy_evidence"),
+            "source_hint_taxonomy": profile.get("source_hint_taxonomy"),
             "format": fmt,
             "dimensions": {"width": width, "height": height},
             "aspect_ratio": aspect,
@@ -241,6 +234,7 @@ def image_profile(
             "dominant_color_names": dominant,
             "non_white_ratio": round(non_white_ratio, 4) if isinstance(non_white_ratio, float) else None,
             "color_count_estimate": color_count_estimate,
+            "structure": structure,
             "chart_candidate": chart_candidate,
             "profile_source": "deterministic_header_pil_sampling" if pil_image is not None else "deterministic_header_only",
         },
@@ -270,6 +264,40 @@ def sampled_color_profile(image: Any) -> tuple[list[str], float, int]:
     return dominant, (non_white / total if total else 0.0), len(unique_sample)
 
 
+def image_structure_profile(image: Any) -> dict[str, Any]:
+    try:
+        import numpy as np
+    except Exception as exc:
+        return {"available": False, "error": f"numpy_unavailable:{exc}"}
+    rgb = image.convert("RGB")
+    rgb.thumbnail((512, 512))
+    arr = np.asarray(rgb)
+    if arr.size == 0:
+        return {"available": False, "error": "empty_image_array"}
+    gray = arr.mean(axis=2)
+    non_white = np.any(arr < 245, axis=2)
+    dark = gray < 80
+    row_ink = non_white.mean(axis=1)
+    col_ink = non_white.mean(axis=0)
+    row_dark = dark.mean(axis=1)
+    col_dark = dark.mean(axis=0)
+    horizontal_lines = int(((row_ink > 0.55) | (row_dark > 0.35)).sum())
+    vertical_lines = int(((col_ink > 0.55) | (col_dark > 0.35)).sum())
+    estimated_text_rows = int(((row_dark > 0.03) & (row_dark < 0.45)).sum())
+    colored = non_white & ~dark
+    return {
+        "available": True,
+        "sampled_width": int(arr.shape[1]),
+        "sampled_height": int(arr.shape[0]),
+        "horizontal_line_rows": horizontal_lines,
+        "vertical_line_columns": vertical_lines,
+        "grid_like": horizontal_lines >= 3 and vertical_lines >= 3,
+        "sparse_linework": bool((horizontal_lines + vertical_lines) >= 4 and float(non_white.mean()) < 0.35),
+        "estimated_text_line_rows": estimated_text_rows,
+        "colored_non_white_ratio": round(float(colored.mean()), 4),
+    }
+
+
 def classify_profile(
     *,
     fmt: str,
@@ -278,24 +306,159 @@ def classify_profile(
     aspect: float | None,
     non_white_ratio: float | None,
     color_count_estimate: int | None,
+    structure: dict[str, Any],
     path: Path,
-) -> str:
+) -> dict[str, Any]:
     if fmt == "SVG":
-        return "vector_document_or_diagram"
-    name = path.stem.casefold()
-    if any(token in name for token in ("chart", "plot", "graph")):
-        return "chart_or_plot_candidate"
-    if any(token in name for token in ("screenshot", "screen", "slide")):
-        return "screenshot_candidate"
-    if any(token in name for token in ("diagram", "schematic", "circuit", "floorplan", "drawing")):
-        return "technical_chart_or_diagram_candidate"
+        return _profile_result(
+            "vector_document_or_diagram",
+            "diagram_flowchart_uml_network",
+            "content_signature",
+            ["svg_vector_markup"],
+            source_hint_taxonomy(path),
+            chart_candidate=False,
+        )
+    hint = source_hint_taxonomy(path)
+    taxonomy, evidence = content_taxonomy_for(
+        width=width,
+        height=height,
+        aspect=aspect,
+        non_white_ratio=non_white_ratio,
+        color_count_estimate=color_count_estimate,
+        structure=structure,
+    )
+    if taxonomy != "unknown":
+        return _profile_result(
+            taxonomy,
+            taxonomy,
+            "deterministic_content_features",
+            evidence,
+            hint,
+            chart_candidate=taxonomy == "chart_plot",
+        )
+    if hint:
+        return _profile_result(
+            hint,
+            hint,
+            "weak_source_filename_hint",
+            [f"weak_filename_hint:{hint}"],
+            hint,
+            chart_candidate=False,
+        )
+    return _profile_result(
+        "general_image_metadata_profile",
+        "photo_scene",
+        "default_low_confidence",
+        ["no_specific_deterministic_route_evidence"],
+        hint,
+        chart_candidate=False,
+    )
+
+
+def _profile_result(
+    profile: str,
+    taxonomy: str,
+    taxonomy_source: str,
+    evidence: list[str],
+    source_hint: str | None,
+    *,
+    chart_candidate: bool,
+) -> dict[str, Any]:
+    return {
+        "profile": profile,
+        "taxonomy": taxonomy,
+        "taxonomy_source": taxonomy_source,
+        "taxonomy_evidence": evidence,
+        "source_hint_taxonomy": source_hint,
+        "chart_candidate": chart_candidate,
+    }
+
+
+def content_taxonomy_for(
+    *,
+    width: int | None,
+    height: int | None,
+    aspect: float | None,
+    non_white_ratio: float | None,
+    color_count_estimate: int | None,
+    structure: dict[str, Any],
+) -> tuple[str, list[str]]:
+    if structure.get("available"):
+        h_lines = int(structure.get("horizontal_line_rows") or 0)
+        v_lines = int(structure.get("vertical_line_columns") or 0)
+        colored_ratio = float(structure.get("colored_non_white_ratio") or 0.0)
+        if h_lines >= 1 and v_lines >= 1 and colored_ratio > 0.01:
+            return "chart_plot", [
+                f"horizontal_line_rows:{h_lines}",
+                f"vertical_line_columns:{v_lines}",
+                f"colored_non_white_ratio:{colored_ratio}",
+            ]
+        if structure.get("grid_like"):
+            return "table_screenshot", [
+                f"horizontal_line_rows:{h_lines}",
+                f"vertical_line_columns:{v_lines}",
+                "grid_like_structure",
+            ]
+        if structure.get("sparse_linework") and (h_lines + v_lines) >= 6:
+            return "diagram_flowchart_uml_network", [
+                f"horizontal_line_rows:{h_lines}",
+                f"vertical_line_columns:{v_lines}",
+                "sparse_linework",
+            ]
+        if int(structure.get("estimated_text_line_rows") or 0) >= 20 and (non_white_ratio or 0) < 0.45:
+            return "document_page", [
+                f"estimated_text_line_rows:{structure.get('estimated_text_line_rows')}",
+                f"non_white_ratio:{non_white_ratio}",
+            ]
     if width and height and width >= 1200 and height >= 700 and color_count_estimate and color_count_estimate < 512:
-        return "screenshot_candidate"
+        return "screenshot_ui", [f"dimensions:{width}x{height}", f"color_count_estimate:{color_count_estimate}"]
     if aspect and (aspect >= 2.2 or aspect <= 0.45) and color_count_estimate and color_count_estimate < 128:
-        return "technical_chart_or_diagram_candidate"
+        return "diagram_flowchart_uml_network", [f"aspect_ratio:{aspect}", f"color_count_estimate:{color_count_estimate}"]
     if non_white_ratio is not None and non_white_ratio < 0.015:
-        return "mostly_blank_or_sparse"
-    return "general_image_metadata_profile"
+        return "abstract_texture", [f"mostly_blank_non_white_ratio:{non_white_ratio}"]
+    return "unknown", []
+
+
+def source_hint_taxonomy(path: Path) -> str | None:
+    name = path.stem.casefold()
+    rules = [
+        ("table_screenshot", ("table", "spreadsheet")),
+        ("chart_plot", ("chart", "plot", "graph", "scatter", "heatmap", "candlestick")),
+        ("circuit_schematic", ("circuit", "schematic", "electrical")),
+        ("architectural_floor_plan", ("floorplan", "floor_plan", "floor-plan", "architectural")),
+        ("mechanical_technical_drawing", ("mechanical", "technical_drawing", "blueprint", "drawing")),
+        ("map_plan_heatmap", ("map", "plan", "route", "geospatial")),
+        ("diagram_flowchart_uml_network", ("diagram", "flowchart", "uml", "network")),
+        ("document_page", ("document", "scan", "page", "invoice", "receipt")),
+        ("screenshot_ui", ("screenshot", "screen", "ui", "webpage", "slide")),
+        ("scientific_medical_image", ("scientific", "medical", "microscopy", "xray", "mri")),
+        ("painting_illustration_art", ("painting", "illustration", "art")),
+        ("logo_icon", ("logo", "icon")),
+        ("photo_scene", ("photo", "scene", "portrait")),
+    ]
+    for taxonomy, tokens in rules:
+        if any(token in name for token in tokens):
+            return taxonomy
+    return None
+
+
+IMAGE_TAXONOMY_LABELS = [
+    "photo_scene",
+    "screenshot_ui",
+    "document_page",
+    "table_screenshot",
+    "chart_plot",
+    "diagram_flowchart_uml_network",
+    "circuit_schematic",
+    "mechanical_technical_drawing",
+    "architectural_floor_plan",
+    "map_plan_heatmap",
+    "scientific_medical_image",
+    "painting_illustration_art",
+    "abstract_texture",
+    "logo_icon",
+    "unknown",
+]
 
 
 def run_ocr_if_configured(image: Any | None, provider: Any) -> dict[str, Any]:
@@ -378,6 +541,9 @@ def render_image_analysis(
         "",
         "Image profile:",
         f"- profile: {profile.get('profile')}",
+        f"- taxonomy: {profile.get('taxonomy')}",
+        f"- taxonomy_source: {profile.get('taxonomy_source')}",
+        f"- taxonomy_evidence: {profile.get('taxonomy_evidence')}",
         f"- dimensions: {profile.get('dimensions')}",
         f"- aspect_ratio: {profile.get('aspect_ratio')}",
         f"- dominant_color_names: {profile.get('dominant_color_names')}",
@@ -414,6 +580,53 @@ def render_image_analysis(
         ]
     )
     return "\n".join(lines).rstrip() + "\n"
+
+
+def build_chart_analysis_schema(
+    profile: dict[str, Any],
+    statuses: list[Any],
+    *,
+    candidate: bool,
+) -> dict[str, Any]:
+    structure = profile.get("structure") if isinstance(profile.get("structure"), dict) else {}
+    chart_type = "unknown_chart"
+    if candidate:
+        if int(structure.get("horizontal_line_rows") or 0) >= 1 and int(structure.get("vertical_line_columns") or 0) >= 1:
+            chart_type = "axis_based_chart_or_plot"
+    status = next((status.to_dict() for status in statuses if status.name == "chart"), None)
+    return {
+        "schema": "all2text.chart_analysis.v1",
+        "candidate": candidate,
+        "attempted": False,
+        "used": False,
+        "status": status,
+        "chart_type": {
+            "value": chart_type if candidate else None,
+            "source": "deterministic_geometry" if candidate else "not_chart_candidate",
+            "confidence": "low" if candidate else "none",
+        },
+        "title": {"value": None, "source": "unavailable"},
+        "axes": {
+            "x": {"label": None, "ticks": [], "source": "unavailable"},
+            "y": {"label": None, "ticks": [], "source": "unavailable"},
+        },
+        "legend": {"labels": [], "source": "unavailable"},
+        "series": [],
+        "table": {"rows": [], "source": "unavailable"},
+        "values": {"recoverable": False, "source": "unavailable", "caveat": "No chart provider returned numeric values."},
+        "evidence": {
+            "taxonomy": profile.get("taxonomy"),
+            "taxonomy_source": profile.get("taxonomy_source"),
+            "taxonomy_evidence": profile.get("taxonomy_evidence"),
+            "structure": structure,
+            "dimensions": profile.get("dimensions"),
+            "dominant_color_names": profile.get("dominant_color_names"),
+        },
+        "limitations": [
+            "No chart specialist provider produced table/series values.",
+            "Geometry/profile evidence is reported without invented chart labels or values.",
+        ],
+    }
 
 
 def color_name(pixel: tuple[int, int, int]) -> str:

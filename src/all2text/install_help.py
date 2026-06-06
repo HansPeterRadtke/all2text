@@ -21,6 +21,15 @@ def install_tools_guidance(system: str | None = None) -> str:
         llama.cpp and model files are intentionally external. Start an OpenAI-compatible llama.cpp
         server, then all2text will probe configured/common local endpoints such as 127.0.0.1:14829
         for text and 127.0.0.1:14830 for vision. Use all2text doctor to see what was found.
+
+        Optional provider Python packages that are usually safe when wheels exist can be installed
+        with binary-only pip first, for example:
+          python -m pip install --only-binary=:all: mutagen h5py netCDF4 astropy pyarrow ezdxf pyshp pyproj pefile macholib lief faster-whisper
+
+        Heavy document/VLM/ASR/diarization model weights are not installed by all2text. Put them
+        under an external model root such as /data/models and configure provider model_path values.
+        Avoid installing Jetson Torch/torchaudio replacements unless they match NVIDIA's local
+        PyTorch build.
         """
     elif name.startswith("windows"):
         body = """

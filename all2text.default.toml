@@ -67,6 +67,14 @@ min_alnum_ratio = 0.35
 min_confidence = 35
 auto_invoke = true
 
+[providers.image_classifier]
+name = "none"
+enabled = false
+model_path = ""
+labels = "default"
+timeout_seconds = 120
+auto_invoke = false
+
 [providers.vlm]
 name = "openai_compatible"
 enabled = true
@@ -100,6 +108,8 @@ specialist = "none"
 model_path = ""
 embedded_images_enabled = false
 confidence_threshold = 0.6
+timeout_seconds = 120
+auto_invoke = false
 
 [providers.document_intelligence]
 name = "none"
@@ -109,12 +119,28 @@ api_key_env = ""
 timeout_seconds = 120
 auto_invoke = false
 
+[providers.audio_classifier]
+name = "none"
+enabled = false
+model_path = ""
+labels = "speech,music,noise,mixed,unknown"
+timeout_seconds = 120
+auto_invoke = false
+
 [providers.speech]
 name = "none"
 enabled = false
 transcribe = false
 translate = false
 language_detection = false
+model_path = ""
+device = "auto"
+timeout_seconds = 300
+auto_invoke = false
+
+[providers.diarization]
+name = "none"
+enabled = false
 model_path = ""
 device = "auto"
 timeout_seconds = 300
@@ -131,6 +157,31 @@ timeout_seconds = 120
 auto_invoke = false
 ocr = false
 vlm = false
+
+[providers.cad]
+name = "none"
+enabled = false
+timeout_seconds = 120
+auto_invoke = false
+
+[providers.scientific]
+name = "none"
+enabled = false
+timeout_seconds = 120
+auto_invoke = false
+
+[providers.geospatial]
+name = "none"
+enabled = false
+timeout_seconds = 120
+auto_invoke = false
+
+[providers.binary_metadata]
+name = "none"
+enabled = false
+timeout_seconds = 120
+max_strings = 100
+auto_invoke = false
 
 [tools.file]
 executable = "file"
@@ -159,5 +210,20 @@ timeout_seconds = 30
 
 [tools.libreoffice]
 executable = "libreoffice"
+path = ""
+timeout_seconds = 120
+
+[tools.whisper_cpp]
+executable = "whisper-cli"
+path = ""
+timeout_seconds = 300
+
+[tools.radare2]
+executable = "radare2"
+path = ""
+timeout_seconds = 120
+
+[tools.capa]
+executable = "capa"
 path = ""
 timeout_seconds = 120

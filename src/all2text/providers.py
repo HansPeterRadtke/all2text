@@ -3,9 +3,11 @@ from __future__ import annotations
 import base64
 import importlib.util
 import json
+import os
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -39,6 +41,8 @@ class ProviderStatus:
     source: str | None = None
     error: str | None = None
     details: dict[str, Any] | None = None
+    lifecycle: dict[str, bool] | None = None
+    evidence: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -54,6 +58,79 @@ class RoutePlan:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class ProviderCandidate:
+    name: str
+    family: str
+    kind: str
+    python_modules: tuple[str, ...] = ()
+    executables: tuple[str, ...] = ()
+    model_hints: tuple[str, ...] = ()
+    endpoint_task: str | None = None
+    execution_status: str = "contract_only"
+    notes: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+PROVIDER_CANDIDATES: tuple[ProviderCandidate, ...] = (
+    ProviderCandidate("docling", "document_ocr_layout", "document_parser", ("docling",), notes="High-level PDF/document conversion provider."),
+    ProviderCandidate("paddleocr_vl", "document_ocr_layout", "document_ocr_vlm", ("paddleocr", "paddle"), ("paddleocr",), ("PaddleOCR", "paddleocr"), notes="Document OCR/layout VLM; model files are external."),
+    ProviderCandidate("glm_ocr", "document_ocr_layout", "document_ocr_vlm", ("transformers",), model_hints=("GLM-OCR", "glm-ocr"), notes="External multimodal OCR model contract."),
+    ProviderCandidate("olmocr", "document_ocr_layout", "pdf_ocr", ("olmocr",), model_hints=("olmOCR", "olmocr"), notes="Heavy PDF OCR/linearization provider contract."),
+    ProviderCandidate("tesseract", "ocr", "ocr_engine", ("pytesseract",), ("tesseract",), execution_status="implemented"),
+    ProviderCandidate("paddleocr", "ocr", "ocr_engine", ("paddleocr", "paddle"), ("paddleocr",)),
+    ProviderCandidate("surya", "ocr", "ocr_layout", ("surya",)),
+    ProviderCandidate("deterministic_image_profile", "image_routing", "deterministic_classifier", execution_status="implemented", notes="Header/Pillow/geometry route classifier."),
+    ProviderCandidate("clip", "image_routing", "image_classifier", ("transformers",), model_hints=("clip", "CLIP")),
+    ProviderCandidate("open_clip", "image_routing", "image_classifier", ("open_clip",), model_hints=("open_clip", "CLIP")),
+    ProviderCandidate("siglip2", "image_routing", "image_classifier", ("transformers",), model_hints=("siglip", "SigLIP")),
+    ProviderCandidate("siglip", "image_routing", "image_classifier", ("transformers",), model_hints=("siglip", "SigLIP")),
+    ProviderCandidate("openai_compatible_vlm", "image_vlm", "vision_language_model", endpoint_task="vlm", execution_status="implemented"),
+    ProviderCandidate("deterministic_chart_geometry", "chart", "chart_heuristic", ("PIL", "numpy"), execution_status="implemented"),
+    ProviderCandidate("deplot", "chart", "chart_to_table", ("transformers", "torch"), model_hints=("deplot", "google_deplot", "Pix2Struct")),
+    ProviderCandidate("unichart", "chart", "chart_vlm", ("transformers", "torch"), model_hints=("unichart", "UniChart")),
+    ProviderCandidate("chartgemma", "chart", "chart_vlm", ("transformers", "torch"), model_hints=("chartgemma", "ChartGemma")),
+    ProviderCandidate("chartcoder", "chart", "chart_structure", ("transformers", "torch"), model_hints=("chartcoder", "ChartCoder")),
+    ProviderCandidate("chartocr", "chart", "chart_ocr", model_hints=("ChartOCR", "chartocr")),
+    ProviderCandidate("ffprobe", "audio", "media_metadata", executables=("ffprobe",), execution_status="implemented"),
+    ProviderCandidate("yamnet", "audio", "audio_classifier", ("tensorflow",), model_hints=("yamnet", "YAMNet")),
+    ProviderCandidate("panns", "audio", "audio_classifier", ("panns_inference",), model_hints=("PANN", "panns")),
+    ProviderCandidate("openbeats", "audio", "audio_classifier", ("transformers",), model_hints=("OpenBEATs", "openbeats")),
+    ProviderCandidate("clap", "audio", "audio_classifier", ("laion_clap",), model_hints=("CLAP", "clap")),
+    ProviderCandidate("whisper_cpp", "audio", "asr", executables=("whisper-cli", "whisper.cpp"), model_hints=("whisper", "Whisper")),
+    ProviderCandidate("faster_whisper", "audio", "asr", ("faster_whisper",), model_hints=("faster-whisper", "faster_whisper")),
+    ProviderCandidate("whisper", "audio", "asr", ("whisper",), model_hints=("whisper", "Whisper")),
+    ProviderCandidate("parakeet", "audio", "asr", ("nemo",), model_hints=("parakeet", "Parakeet")),
+    ProviderCandidate("canary", "audio", "asr", ("nemo",), model_hints=("canary", "Canary")),
+    ProviderCandidate("pyannote", "audio", "diarization", ("pyannote.audio",), model_hints=("pyannote", "diarization")),
+    ProviderCandidate("diarizen", "audio", "diarization", ("diarizen",), model_hints=("diarizen", "Diarization")),
+    ProviderCandidate("nemo", "audio", "diarization", ("nemo",), model_hints=("nemo", "diarization")),
+    ProviderCandidate("ffmpeg", "video", "frame_extractor", executables=("ffmpeg",), execution_status="planned"),
+    ProviderCandidate("opencv", "video", "frame_analyzer", ("cv2",), execution_status="implemented_for_detection"),
+    ProviderCandidate("pyscenedetect", "video", "scene_detection", ("scenedetect",)),
+    ProviderCandidate("ezdxf", "cad_bim", "dxf_schema", ("ezdxf",), execution_status="implemented_when_dependency_found"),
+    ProviderCandidate("ifcopenshell", "cad_bim", "ifc_bim_schema", ("ifcopenshell",)),
+    ProviderCandidate("h5py", "scientific_geospatial", "hdf5_schema", ("h5py",), execution_status="implemented_when_dependency_found"),
+    ProviderCandidate("h5netcdf", "scientific_geospatial", "netcdf_schema", ("h5netcdf",)),
+    ProviderCandidate("netcdf4", "scientific_geospatial", "netcdf_schema", ("netCDF4",), execution_status="implemented_when_dependency_found"),
+    ProviderCandidate("astropy", "scientific_geospatial", "fits_schema", ("astropy",), execution_status="implemented_when_dependency_found"),
+    ProviderCandidate("pyarrow", "scientific_geospatial", "parquet_schema", ("pyarrow",), execution_status="implemented_when_dependency_found"),
+    ProviderCandidate("scipy", "scientific_geospatial", "matlab_schema", ("scipy",), execution_status="implemented_when_dependency_found"),
+    ProviderCandidate("numpy", "scientific_geospatial", "npy_schema", ("numpy",), execution_status="implemented"),
+    ProviderCandidate("pyshp", "scientific_geospatial", "shapefile_schema", ("shapefile",), execution_status="implemented_when_dependency_found"),
+    ProviderCandidate("pyproj", "scientific_geospatial", "crs_transform_metadata", ("pyproj",)),
+    ProviderCandidate("shapely", "scientific_geospatial", "geometry_metadata", ("shapely",)),
+    ProviderCandidate("pefile", "binary_metadata", "pe_metadata", ("pefile",), execution_status="implemented_when_dependency_found"),
+    ProviderCandidate("macholib", "binary_metadata", "macho_metadata", ("macholib",)),
+    ProviderCandidate("lief", "binary_metadata", "cross_binary_metadata", ("lief",)),
+    ProviderCandidate("capa", "binary_metadata", "binary_capability_metadata", executables=("capa",)),
+    ProviderCandidate("radare2", "binary_metadata", "binary_metadata_tool", executables=("radare2", "r2")),
+    ProviderCandidate("file", "binary_metadata", "file_type_metadata", executables=("file",), execution_status="implemented"),
+)
 
 
 def provider_statuses(config: object | None, *, family: str | None = None) -> list[ProviderStatus]:
@@ -74,6 +151,12 @@ def provider_statuses(config: object | None, *, family: str | None = None) -> li
                     profile=cfg.options.profile,
                     auto_detect=cfg.options.auto_detect_local_models,
                 ),
+                configured_candidate_status(
+                    "image_classifier",
+                    effective_provider(cfg, "image_classifier"),
+                    configured=cfg.provider("image_classifier"),
+                    profile=cfg.options.profile,
+                ),
             ]
         )
     if family in {None, "image", "document", "chart"}:
@@ -92,12 +175,26 @@ def provider_statuses(config: object | None, *, family: str | None = None) -> li
             ]
         )
     if family in {None, "audio", "video"}:
-        statuses.append(
-            speech_status(
-                effective_provider(cfg, "speech"),
-                configured=cfg.provider("speech"),
-                profile=cfg.options.profile,
-            )
+        statuses.extend(
+            [
+                configured_candidate_status(
+                    "audio_classifier",
+                    effective_provider(cfg, "audio_classifier"),
+                    configured=cfg.provider("audio_classifier"),
+                    profile=cfg.options.profile,
+                ),
+                speech_status(
+                    effective_provider(cfg, "speech"),
+                    configured=cfg.provider("speech"),
+                    profile=cfg.options.profile,
+                ),
+                configured_candidate_status(
+                    "diarization",
+                    effective_provider(cfg, "diarization"),
+                    configured=cfg.provider("diarization"),
+                    profile=cfg.options.profile,
+                ),
+            ]
         )
     if family in {None, "video"}:
         statuses.append(
@@ -117,7 +214,191 @@ def provider_statuses(config: object | None, *, family: str | None = None) -> li
                 auto_detect=cfg.options.auto_detect_local_models,
             )
         )
+    if family in {None, "cad_bim"}:
+        statuses.append(
+            configured_candidate_status(
+                "cad",
+                effective_provider(cfg, "cad"),
+                configured=cfg.provider("cad"),
+                profile=cfg.options.profile,
+            )
+        )
+    if family in {None, "scientific_geospatial"}:
+        for task in ("scientific", "geospatial"):
+            statuses.append(
+                configured_candidate_status(
+                    task,
+                    effective_provider(cfg, task),
+                    configured=cfg.provider(task),
+                    profile=cfg.options.profile,
+                )
+            )
+    if family in {None, "binary_metadata"}:
+        statuses.append(
+            configured_candidate_status(
+                "binary_metadata",
+                effective_provider(cfg, "binary_metadata"),
+                configured=cfg.provider("binary_metadata"),
+                profile=cfg.options.profile,
+            )
+        )
     return statuses
+
+
+def provider_family_statuses(config: object | None, *, family: str | None = None) -> list[ProviderStatus]:
+    cfg = config_for_context(config)
+    return [
+        candidate_status(candidate, cfg)
+        for candidate in PROVIDER_CANDIDATES
+        if family is None or candidate.family == family
+    ]
+
+
+def candidate_status(candidate: ProviderCandidate, config: Any) -> ProviderStatus:
+    if candidate.endpoint_task:
+        endpoint = next(
+            (
+                status
+                for status in provider_statuses(config, family=_family_for_endpoint_task(candidate.endpoint_task))
+                if status.name == candidate.endpoint_task
+            ),
+            None,
+        )
+        if endpoint is not None:
+            details = dict(endpoint.details or {})
+            details.update({"candidate": candidate.to_dict()})
+            return ProviderStatus(
+                name=candidate.name,
+                kind=candidate.kind,
+                enabled=endpoint.enabled,
+                available=endpoint.available,
+                source=endpoint.source,
+                error=endpoint.error,
+                details=details,
+                lifecycle=dict(endpoint.lifecycle or {}),
+                evidence=list(endpoint.evidence or []),
+            )
+
+    dependency_results = {module: python_module_available(module) for module in candidate.python_modules}
+    executable_results = {
+        executable: _which_executable(executable) for executable in candidate.executables
+    }
+    model_matches = discover_model_hints(candidate.model_hints)
+
+    dependency_found = all(dependency_results.values()) if dependency_results else None
+    executable_found = any(executable_results.values()) if executable_results else None
+    if candidate.name.startswith("deterministic_"):
+        available = True
+        error = None
+    elif dependency_results and not all(dependency_results.values()):
+        available = False
+        missing = ", ".join(name for name, found in dependency_results.items() if not found)
+        error = f"Python dependency missing: {missing}"
+    elif candidate.executables and not executable_found:
+        available = False
+        error = f"Executable not found: {' or '.join(candidate.executables)}"
+    elif candidate.model_hints and not model_matches:
+        available = False
+        error = "External model files not found under configured/runtime model roots"
+    elif candidate.execution_status.startswith("implemented"):
+        available = True
+        error = None
+    else:
+        available = False
+        error = f"{candidate.name} provider execution adapter is {candidate.execution_status}"
+
+    source = None
+    if model_matches:
+        source = model_matches[0]
+    elif executable_results:
+        source = next((path for path in executable_results.values() if path), None)
+
+    evidence = []
+    if dependency_results:
+        evidence.extend(f"python:{name}={found}" for name, found in sorted(dependency_results.items()))
+    if executable_results:
+        evidence.extend(f"tool:{name}={bool(path)}" for name, path in sorted(executable_results.items()))
+    if model_matches:
+        evidence.append(f"model_hint_matches:{len(model_matches)}")
+    if candidate.notes:
+        evidence.append(candidate.notes)
+
+    return ProviderStatus(
+        name=candidate.name,
+        kind=candidate.kind,
+        enabled=True,
+        available=available,
+        source=source,
+        error=error,
+        details={
+            "candidate": candidate.to_dict(),
+            "python_dependencies": dependency_results,
+            "executables": executable_results,
+            "model_matches": model_matches[:10],
+            "model_roots": [str(path) for path in model_roots()],
+            "execution_status": candidate.execution_status,
+        },
+        lifecycle=provider_lifecycle(
+            configured=True,
+            enabled=True,
+            available=available,
+            error=error,
+            dependency_found=dependency_found,
+            executable_found=executable_found,
+            auto_detected=bool(source),
+            endpoint_reachable=None,
+        ),
+        evidence=evidence,
+    )
+
+
+def configured_candidate_status(
+    name: str,
+    provider: ProviderConfig,
+    *,
+    configured: ProviderConfig,
+    profile: str,
+) -> ProviderStatus:
+    enabled = provider.enabled and provider.name != "none"
+    if provider.get("disabled_by_profile"):
+        error = f"{name} provider disabled by profile:{profile}"
+        available = False
+    elif not enabled:
+        error = f"{name} provider disabled by config"
+        available = False
+    else:
+        candidate = next((item for item in PROVIDER_CANDIDATES if item.name == provider.name), None)
+        if candidate is None:
+            error = f"{name} provider is not implemented in all2text core: {provider.name}"
+            available = False
+        else:
+            status = candidate_status(candidate, config_for_context(None))
+            available = status.available and candidate.execution_status.startswith("implemented")
+            error = None if available else (status.error or f"{provider.name} execution adapter is not implemented")
+    return ProviderStatus(
+        name=name,
+        kind=name,
+        enabled=enabled,
+        available=available,
+        source=str(provider.get("model_path", "") or provider.get("path", "") or "") or None,
+        error=error,
+        details={
+            "provider": provider.name,
+            "configured_enabled": configured.enabled,
+            "effective_enabled": enabled,
+            "profile": profile,
+            "auto_invoke": bool(provider.get("auto_invoke", False)),
+            "params": dict(provider.params),
+        },
+        lifecycle=provider_lifecycle(
+            configured=configured.enabled or configured.name != "none",
+            enabled=enabled,
+            available=available,
+            error=error,
+            skipped=enabled and not bool(provider.get("auto_invoke", False)),
+        ),
+        evidence=[f"configured_provider:{provider.name}"],
+    )
 
 
 def plan_image_route(
@@ -172,8 +453,24 @@ def plan_image_route(
 
 
 def image_family(image_profile: dict[str, Any], *, chart_candidate: bool) -> str:
+    taxonomy = str(image_profile.get("taxonomy") or "").lower()
+    if taxonomy == "chart_plot" or chart_candidate:
+        return "chart"
+    if taxonomy in {"document_page", "table_screenshot"}:
+        return "document"
+    if taxonomy == "screenshot_ui":
+        return "screenshot"
+    if taxonomy in {
+        "diagram_flowchart_uml_network",
+        "circuit_schematic",
+        "mechanical_technical_drawing",
+        "architectural_floor_plan",
+        "map_plan_heatmap",
+        "scientific_medical_image",
+    }:
+        return "diagram"
     profile = str(image_profile.get("profile") or "").lower()
-    if chart_candidate or "chart" in profile or "plot" in profile:
+    if "chart" in profile or "plot" in profile:
         return "chart"
     if "document" in profile or "scan" in profile:
         return "document"
@@ -228,6 +525,22 @@ def ocr_status(
             ),
             "tool": tool,
         },
+        lifecycle=provider_lifecycle(
+            configured=configured.enabled or configured.name != "none",
+            enabled=enabled,
+            available=available,
+            error=error,
+            auto_detected=bool(tool.get("auto_detected")),
+            dependency_found=(
+                importlib.util.find_spec("pytesseract") is not None if provider.name == "tesseract" else None
+            ),
+            executable_found=bool(executable) if provider.name == "tesseract" else None,
+        ),
+        evidence=[
+            f"provider:{provider.name}",
+            f"profile:{profile}",
+            f"tool_source:{executable or '<none>'}",
+        ],
     )
 
 
@@ -281,6 +594,20 @@ def vlm_status(
             "auto_invoke": bool(provider.get("auto_invoke", False)),
             "endpoint_probe": endpoint_probe,
         },
+        lifecycle=provider_lifecycle(
+            configured=configured.enabled or configured.name != "none",
+            enabled=enabled,
+            available=available,
+            error=error,
+            auto_detected=bool((endpoint_probe or {}).get("base_url")),
+            endpoint_reachable=bool((endpoint_probe or {}).get("reachable")) if endpoint_probe else None,
+            skipped=available and not bool(provider.get("auto_invoke", False)),
+        ),
+        evidence=[
+            f"provider:{provider.name}",
+            f"model:{model or '<none>'}",
+            f"base_url:{(endpoint_probe or {}).get('base_url') or base_url or '<none>'}",
+        ],
     )
 
 
@@ -336,6 +663,20 @@ def llm_text_status(
             "auto_invoke": bool(provider.get("auto_invoke", False)),
             "endpoint_probe": endpoint_probe,
         },
+        lifecycle=provider_lifecycle(
+            configured=configured.enabled or configured.name != "none",
+            enabled=enabled,
+            available=available,
+            error=error,
+            auto_detected=bool((endpoint_probe or {}).get("base_url")),
+            endpoint_reachable=bool((endpoint_probe or {}).get("reachable")) if endpoint_probe else None,
+            skipped=available and not bool(provider.get("auto_invoke", False)),
+        ),
+        evidence=[
+            f"provider:{provider.name}",
+            f"model:{model or '<none>'}",
+            f"base_url:{(endpoint_probe or {}).get('base_url') or base_url or '<none>'}",
+        ],
     )
 
 
@@ -348,9 +689,9 @@ def chart_status(provider: ProviderConfig, *, configured: ProviderConfig, profil
         error = f"chart specialist disabled by profile:{profile}"
     elif not enabled:
         error = "chart specialist disabled by config"
-    elif provider.name in {"deplot", "chartgemma", "unichart"}:
+    elif provider.name in {"deplot", "chartgemma", "unichart", "chartcoder", "chartocr"}:
         path = Path(model_path)
-        available = path.exists() and any((path / filename).exists() for filename in ("config.json", "model.safetensors"))
+        available = path.exists() and any((path / filename).exists() for filename in ("config.json", "model.safetensors", "pytorch_model.bin"))
         error = None if available else f"chart model files not found at {path}"
         if available:
             error = f"{provider.name} execution adapter is not implemented in all2text core yet"
@@ -371,6 +712,16 @@ def chart_status(provider: ProviderConfig, *, configured: ProviderConfig, profil
             "profile": profile,
             "embedded_images_enabled": bool(provider.get("embedded_images_enabled", False)),
         },
+        lifecycle=provider_lifecycle(
+            configured=configured.enabled or configured.name != "none",
+            enabled=enabled,
+            available=available,
+            error=error,
+            dependency_found=provider.name in {"deplot", "chartgemma", "unichart", "chartcoder", "chartocr"}
+            and importlib.util.find_spec("transformers") is not None,
+            auto_detected=bool(model_path),
+        ),
+        evidence=[f"provider:{provider.name}", f"model_path:{model_path or '<none>'}"],
     )
 
 
@@ -395,6 +746,15 @@ def document_intelligence_status(provider: ProviderConfig, *, configured: Provid
             "effective_enabled": enabled,
             "profile": profile,
         },
+        lifecycle=provider_lifecycle(
+            configured=configured.enabled or configured.name != "none",
+            enabled=enabled,
+            available=False,
+            error=error,
+            dependency_found=_provider_dependency_found(provider.name),
+            auto_detected=bool(provider.get("endpoint", "") or provider.get("model_path", "")),
+        ),
+        evidence=[f"provider:{provider.name}"],
     )
 
 
@@ -402,17 +762,36 @@ def speech_status(provider: ProviderConfig, *, configured: ProviderConfig, profi
     enabled = provider.enabled and provider.name != "none"
     available = False
     error = None
+    model_ref = str(provider.get("model_path", "") or provider.get("model", "") or "")
+    executable_ref = None
     if provider.get("disabled_by_profile"):
         error = f"speech provider disabled by profile:{profile}"
     elif not enabled:
         error = "speech provider disabled by config"
-    elif provider.name in {"whisper", "faster_whisper", "vosk"}:
-        module_name = "faster_whisper" if provider.name == "faster_whisper" else provider.name
-        try:
-            __import__(module_name)
-            available = True
-        except Exception:
+    elif provider.name in {"whisper", "faster_whisper", "vosk", "parakeet", "canary"}:
+        module_names = {
+            "whisper": ("whisper",),
+            "faster_whisper": ("faster_whisper",),
+            "vosk": ("vosk",),
+            "parakeet": ("nemo",),
+            "canary": ("nemo",),
+        }[provider.name]
+        dependency_found = all(python_module_available(module_name) for module_name in module_names)
+        if not dependency_found:
+            module_name = ", ".join(module_names)
             error = f"Python package not installed for speech provider: {module_name}"
+        elif not model_ref:
+            error = "speech provider package found but model_path/model is not configured; no model download performed"
+        else:
+            available = True
+    elif provider.name == "whisper_cpp":
+        executable_ref = str(provider.get("executable", "") or _which_executable("whisper-cli") or _which_executable("whisper.cpp") or "")
+        if not executable_ref:
+            error = "whisper.cpp executable not found: whisper-cli or whisper.cpp"
+        elif not model_ref:
+            error = "whisper.cpp executable found but model_path/model is not configured"
+        else:
+            available = True
     else:
         error = f"speech provider is not implemented in all2text core: {provider.name}"
     return ProviderStatus(
@@ -420,17 +799,34 @@ def speech_status(provider: ProviderConfig, *, configured: ProviderConfig, profi
         kind="speech",
         enabled=enabled,
         available=available,
-        source=str(provider.get("model_path", "") or "") or None,
+        source=model_ref or executable_ref or None,
         error=error,
         details={
             "provider": provider.name,
             "configured_enabled": configured.enabled,
             "effective_enabled": enabled,
             "profile": profile,
+            "model_ref": model_ref or None,
+            "executable": executable_ref or None,
             "transcribe": bool(provider.get("transcribe", False)),
             "translate": bool(provider.get("translate", False)),
             "language_detection": bool(provider.get("language_detection", False)),
         },
+        lifecycle=provider_lifecycle(
+            configured=configured.enabled or configured.name != "none",
+            enabled=enabled,
+            available=available,
+            error=error,
+            dependency_found=_provider_dependency_found(provider.name),
+            executable_found=bool(executable_ref) if provider.name == "whisper_cpp" else None,
+            auto_detected=bool(model_ref),
+            skipped=available and not bool(provider.get("auto_invoke", False)),
+        ),
+        evidence=[
+            f"provider:{provider.name}",
+            f"model_ref:{model_ref or '<none>'}",
+            f"executable:{executable_ref or '<none>'}",
+        ],
     )
 
 
@@ -471,6 +867,16 @@ def video_frame_status(
             "vlm": bool(provider.get("vlm", False)),
             "tool": tool,
         },
+        lifecycle=provider_lifecycle(
+            configured=configured.enabled or configured.name != "none",
+            enabled=enabled,
+            available=available,
+            error=error,
+            auto_detected=bool(tool.get("auto_detected")),
+            executable_found=bool(ffmpeg) if provider.name == "ffmpeg" else None,
+            skipped=available and not bool(provider.get("auto_invoke", False)),
+        ),
+        evidence=[f"provider:{provider.name}", f"tool_source:{ffmpeg or '<none>'}"],
     )
 
 
@@ -608,6 +1014,138 @@ def image_to_png_bytes(image: Any) -> bytes | None:
         return buffer.getvalue()
     except Exception:
         return None
+
+
+def provider_lifecycle(
+    *,
+    configured: bool,
+    enabled: bool,
+    available: bool,
+    error: str | None,
+    auto_detected: bool = False,
+    dependency_found: bool | None = None,
+    executable_found: bool | None = None,
+    endpoint_reachable: bool | None = None,
+    attempted: bool = False,
+    used: bool = False,
+    skipped: bool = False,
+) -> dict[str, bool]:
+    failed = bool(error) and attempted
+    missing = bool(enabled and not available and error)
+    result: dict[str, bool] = {
+        "configured": configured,
+        "auto_detected": auto_detected,
+        "attempted": attempted,
+        "used": used,
+        "skipped": skipped or bool(enabled and not attempted and not used),
+        "failed": failed,
+        "disabled": not enabled,
+        "missing": missing,
+        "error": bool(error),
+    }
+    if dependency_found is not None:
+        result["dependency_found"] = dependency_found
+    if executable_found is not None:
+        result["executable_found"] = executable_found
+    if endpoint_reachable is not None:
+        result["endpoint_reachable"] = endpoint_reachable
+    return result
+
+
+def model_roots() -> list[Path]:
+    roots: list[Path] = []
+    for value in (
+        os.environ.get("ALL2TEXT_MODEL_ROOT"),
+        "/data/models",
+    ):
+        if not value:
+            continue
+        path = Path(value).expanduser()
+        if path.exists() and path not in roots:
+            roots.append(path)
+    return roots
+
+
+@lru_cache(maxsize=64)
+def discover_model_hints(hints: tuple[str, ...]) -> list[str]:
+    if not hints:
+        return []
+    lowered = [hint.casefold() for hint in hints if hint]
+    matches: list[str] = []
+    for root in model_roots():
+        try:
+            for path in _bounded_model_files(root, max_depth=5, max_files=20000):
+                if len(matches) >= 25:
+                    return matches
+                name = path.name.casefold()
+                parent = path.parent.as_posix().casefold()
+                if path.name not in {"config.json", "model.safetensors", "pytorch_model.bin"} and path.suffix.casefold() != ".gguf":
+                    continue
+                if any(hint in name or hint in parent for hint in lowered):
+                    matches.append(str(path.parent if path.name == "config.json" else path))
+        except (OSError, PermissionError):
+            continue
+    return list(dict.fromkeys(matches))
+
+
+def _bounded_model_files(root: Path, *, max_depth: int, max_files: int) -> list[Path]:
+    files: list[Path] = []
+    root_depth = len(root.parts)
+    for current, dirs, names in os.walk(root):
+        current_path = Path(current)
+        depth = len(current_path.parts) - root_depth
+        if depth >= max_depth:
+            dirs[:] = []
+        dirs[:] = [name for name in dirs if name not in {".git", "__pycache__", "snapshots", "blobs"}]
+        for name in names:
+            path = current_path / name
+            if name in {"config.json", "model.safetensors", "pytorch_model.bin"} or path.suffix.casefold() == ".gguf":
+                files.append(path)
+                if len(files) >= max_files:
+                    return files
+    return files
+
+
+def _which_executable(name: str) -> str | None:
+    import shutil
+
+    return shutil.which(name)
+
+
+def _family_for_endpoint_task(task: str) -> str | None:
+    if task == "vlm":
+        return "image"
+    if task == "llm_text":
+        return "text"
+    return None
+
+
+def _provider_dependency_found(provider_name: str) -> bool | None:
+    module_map = {
+        "docling": ("docling",),
+        "paddleocr_vl": ("paddleocr", "paddle"),
+        "glm_ocr": ("transformers",),
+        "olmocr": ("olmocr",),
+        "whisper": ("whisper",),
+        "faster_whisper": ("faster_whisper",),
+        "vosk": ("vosk",),
+        "parakeet": ("nemo",),
+        "canary": ("nemo",),
+        "pyannote": ("pyannote.audio",),
+        "diarizen": ("diarizen",),
+        "nemo": ("nemo",),
+    }
+    modules = module_map.get(provider_name)
+    if modules is None:
+        return None
+    return all(python_module_available(module) for module in modules)
+
+
+def python_module_available(module: str) -> bool:
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
 
 
 def _available(statuses: list[ProviderStatus], name: str) -> bool:

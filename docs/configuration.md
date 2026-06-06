@@ -216,13 +216,21 @@ Current core provider behavior:
 
 - OCR: Tesseract can be invoked when explicitly enabled and available.
 - VLM: OpenAI-compatible HTTP vision calls can be invoked when explicitly enabled.
-- Chart, document intelligence, speech, and video frame providers expose status and routing hooks;
-  execution adapters remain roadmap unless a custom backend implements them.
+- Image route classification, chart, document intelligence, audio classifier, speech, diarization,
+  video frame, CAD, scientific, geospatial, and binary metadata providers expose status and routing
+  hooks. Heavy model-backed adapters remain contract-only unless explicitly implemented and
+  configured.
 - Video frame settings (`sample_frames`, `max_frames`, `interval_seconds`, `output_format`, `ocr`,
   and `vlm`) are reflected in per-video stage plans even when `auto_invoke=false`, so downstream
   jobs can see exactly what would run and why it did not.
 - Speech settings (`transcribe`, `translate`, `language_detection`, `model_path`, `device`,
   `timeout_seconds`) are reflected in audio/video stage plans with clear provider blockers.
+- Audio classifier settings expose the route for `speech|music|noise|mixed|unknown` classification.
+  Diarization settings expose the planned speaker-turn schema. Neither fabricates labels or
+  transcripts when the configured model/provider is absent.
+- CAD/scientific/geospatial/binary metadata providers are schema-only. They may use installed
+  libraries such as `ezdxf`, `h5py`, `netCDF4`, `astropy`, `pyarrow`, `pyshp`, `pefile`,
+  `macholib`, or `lief`, but they do not execute files, render geometry, or dump large arrays.
 
 Custom keys are preserved in provider `params`, so local deployments can add model paths,
 temperature, prompt policy, tenant IDs, or tool-specific settings without changing the schema.
@@ -230,6 +238,14 @@ temperature, prompt policy, tenant IDs, or tool-specific settings without changi
 The top-level manifest includes `provider_statuses` for the configured providers even if the run
 contains no image/audio/video files. Per-file image and media records also include family-specific
 provider statuses, route plans, and stage blockers.
+
+The manifest and `all2text doctor` also include `provider_family_statuses`. This is a broader
+catalog of researched provider candidates such as Docling, PaddleOCR-VL, GLM-OCR, olmOCR,
+CLIP/SigLIP, DePlot, UniChart, ChartGemma, YAMNet/PANNs/OpenBEATs/CLAP, faster-whisper,
+whisper.cpp, pyannote, ezdxf, IfcOpenShell, h5py/netCDF4/astropy/pyarrow/scipy, pyshp/pyproj,
+pefile/macholib/LIEF/capa/radare2. Each row reports lifecycle flags such as `configured`,
+`auto_detected`, `dependency_found`, `executable_found`, `endpoint_reachable`, `attempted`,
+`used`, `skipped`, `failed`, `disabled`, `missing`, and `error`.
 
 The top-level manifest also includes `capabilities`, which lists:
 
@@ -269,3 +285,23 @@ all2text install-tools
 ```
 
 The pip command installs the Python package and safe PyPI dependencies. External binaries and model files are detected at runtime or configured explicitly.
+
+## Jetson Install Notes
+
+On the current Jetson Python 3.8 environment, the following optional packages installed safely from
+binary wheels or small pure-Python wheels: `ebooklib`, `odfpy`, `mutagen`, `piexif`, `rarfile`,
+`xlrd`, `pyshp`, `pyproj`, `pefile`, `ezdxf`, `netCDF4`, `astropy`, `pyarrow`, `h5netcdf`, `h5py`,
+`filetype`, `python-magic`, `py7zr`, `macholib`, `lief`, and `faster-whisper`.
+
+Provider blockers observed on Jetson:
+
+- `docling`: no compatible distribution was available from the active package index for this
+  Python/runtime.
+- `paddleocr`: package resolution is possible, but the dry-run plan adds a large pinned
+  `opencv-contrib-python` stack alongside the existing OpenCV install and still does not install
+  PaddleOCR-VL model files. Treat it as a deliberate external install, not a normal default.
+- `pyannote.audio`: resolver backtracking ended at unavailable GPU/torchaudio-era dependencies.
+  Installing torchaudio over NVIDIA's Jetson Torch build is not considered safe by default.
+- Docling/PaddleOCR-VL/GLM-OCR/olmOCR/ChartGemma/UniChart/DePlot/faster-whisper model weights are
+  external. Put them outside the repo, for example under `/data/models`, and configure `model_path`
+  or a local endpoint. Do not commit model files or runtime caches.

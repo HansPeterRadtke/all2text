@@ -181,6 +181,14 @@ def render_report(manifest: dict[str, Any]) -> str:
                 f"- {status.get('name')}: enabled={status.get('enabled')} "
                 f"available={status.get('available')} error={status.get('error')}"
             )
+    if manifest.get("provider_family_statuses"):
+        lines.extend(["", "Provider family statuses:"])
+        for status in manifest["provider_family_statuses"]:
+            candidate = (status.get("details") or {}).get("candidate") or {}
+            lines.append(
+                f"- {candidate.get('family') or status.get('kind')}/{status.get('name')}: "
+                f"available={status.get('available')} error={status.get('error')}"
+            )
     if manifest.get("module_statuses"):
         lines.extend(["", "Module statuses:"])
         for key, status in sorted(manifest["module_statuses"].items()):

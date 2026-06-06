@@ -20,6 +20,10 @@ Core behavior:
 - list ZIP/TAR/GZIP/BZIP2/XZ-style archives or compressed streams safely without extracting them;
 - record symlinks without following them;
 - provide explicit safe summaries and provider-route reports for binary and unsupported deep formats;
+- expose provider-family status for document OCR/layout, image routing, OCR, VLM, charts, audio,
+  video, CAD/BIM, scientific/geospatial, and binary metadata without downloading model files;
+- emit bounded schema metadata for installed CAD/scientific/geospatial/binary libraries without
+  dumping arrays, rendering geometry, executing files, or inventing semantic conclusions;
 - generate `_conversion_manifest.json` and `_conversion_report.txt`.
 
 Example:
@@ -197,10 +201,11 @@ Safe placeholder coverage:
 
 Image and media outputs now include layered provider routing/status reports. Top-level manifests
 also include configured provider statuses and capability status, so disabled/unavailable local
-llama.cpp, OCR, speech, shell tools, Python optional libraries, and video-frame routes are visible
-even when no matching files are present. Outputs do not claim OCR, transcription, VLM understanding,
-chart values, CAD geometry analysis, or scientific array extraction unless a configured provider
-actually returns accepted evidence.
+llama.cpp, OCR, chart, audio classifier, speech, diarization, shell tools, Python optional
+libraries, CAD/scientific/geospatial/binary metadata probes, and video-frame routes are visible even
+when no matching files are present. Outputs do not claim OCR, transcription, VLM understanding,
+chart values, CAD geometry analysis, scientific array values, or binary behavior unless a configured
+provider actually returns accepted evidence.
 
 See [docs/coverage.md](docs/coverage.md) for the detailed matrix.
 

@@ -251,10 +251,14 @@ def media_stages(
 ) -> dict[str, Any]:
     cfg = config_for_context(config)
     speech_status = next((status for status in statuses if status.name == "speech"), None)
+    audio_classifier_status = next((status for status in statuses if status.name == "audio_classifier"), None)
+    diarization_status = next((status for status in statuses if status.name == "diarization"), None)
     frame_status = next((status for status in statuses if status.name == "video_frames"), None)
     ocr_status = next((status for status in statuses if status.name == "ocr"), None)
     vlm_status = next((status for status in statuses if status.name == "vlm"), None)
     speech_provider = effective_provider(cfg, "speech")
+    audio_classifier_provider = effective_provider(cfg, "audio_classifier")
+    diarization_provider = effective_provider(cfg, "diarization")
     frame_provider = effective_provider(cfg, "video_frames")
     speech_likely = profile.get("coarse_classification") in {
         "unknown_audio_content",
@@ -274,6 +278,11 @@ def media_stages(
             "confidence": "low",
             "limitation": profile.get("classification_note"),
         },
+        "audio_kind_classification": audio_classifier_stage_plan(
+            audio_classifier_provider,
+            audio_classifier_status,
+            audio_possible=speech_likely,
+        ),
         "language_detection": speech_stage_plan(
             speech_provider,
             speech_status,
@@ -294,6 +303,11 @@ def media_stages(
             enabled_key="translate",
             speech_possible=speech_likely,
             auto_invoke=speech_auto,
+        ),
+        "diarization": diarization_stage_plan(
+            diarization_provider,
+            diarization_status,
+            speech_possible=speech_likely,
         ),
     }
     if classification.rough_category == "video":
@@ -320,6 +334,65 @@ def media_stages(
             }
         )
     return stages
+
+
+def audio_classifier_stage_plan(provider: Any, status: Any | None, *, audio_possible: bool) -> dict[str, Any]:
+    auto_invoke = bool(provider.get("auto_invoke", False))
+    requested = bool(provider.enabled and provider.name != "none")
+    plan = {
+        "attempted": False,
+        "planned": requested,
+        "audio_possible": audio_possible,
+        "provider": getattr(provider, "name", "none"),
+        "labels": str(provider.get("labels", "speech,music,noise,mixed,unknown") or ""),
+        "auto_invoke": auto_invoke,
+        "provider_status": status.to_dict() if status else None,
+        "output_schema": {
+            "kind": "speech|music|noise|mixed|unknown",
+            "confidence": "0.0-1.0",
+            "evidence": "provider scores or deterministic metadata only",
+        },
+    }
+    if not requested:
+        plan["reason"] = "audio classifier disabled by config"
+    elif not audio_possible:
+        plan["reason"] = "no audio stream/profile evidence"
+    elif status is None or not status.available:
+        plan["reason"] = getattr(status, "error", None) or "audio classifier unavailable"
+    elif not auto_invoke:
+        plan["reason"] = "audio classifier configured but auto_invoke=false"
+    else:
+        plan["reason"] = "audio classifier execution hook configured"
+    return plan
+
+
+def diarization_stage_plan(provider: Any, status: Any | None, *, speech_possible: bool) -> dict[str, Any]:
+    auto_invoke = bool(provider.get("auto_invoke", False))
+    requested = bool(provider.enabled and provider.name != "none")
+    plan = {
+        "attempted": False,
+        "planned": requested,
+        "speech_possible": speech_possible,
+        "provider": getattr(provider, "name", "none"),
+        "auto_invoke": auto_invoke,
+        "provider_status": status.to_dict() if status else None,
+        "output_schema": {
+            "speaker_turns": [],
+            "speaker_labels": "provider-assigned labels only",
+            "timestamps": "seconds",
+        },
+    }
+    if not requested:
+        plan["reason"] = "diarization disabled by config"
+    elif not speech_possible:
+        plan["reason"] = "no audio stream/profile evidence that speech is possible"
+    elif status is None or not status.available:
+        plan["reason"] = getattr(status, "error", None) or "diarization provider unavailable"
+    elif not auto_invoke:
+        plan["reason"] = "diarization provider configured but auto_invoke=false"
+    else:
+        plan["reason"] = "diarization execution hook configured"
+    return plan
 
 
 def speech_stage_plan(

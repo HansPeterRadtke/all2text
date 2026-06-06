@@ -12,7 +12,7 @@ from all2text.jsonsafe import json_dumps, to_jsonable
 from all2text.metadata import collect_metadata, copy_supported_metadata
 from all2text.models import Classification, ConversionContext, ConversionResult, RunOptions, TreeEntry
 from all2text.planning import create_target_directories, reserve_output_files
-from all2text.providers import provider_statuses
+from all2text.providers import provider_family_statuses, provider_statuses
 from all2text.registry import ConversionRegistry, build_default_registry
 from all2text.rendering import planned_output_dict, render_text_output, write_text
 from all2text.reporting import build_module_statuses, build_summary, manifest_paths, render_report
@@ -56,6 +56,7 @@ def run(
     registry = registry or build_default_registry(config)
     capabilities = capability_report(config)
     provider_status_list = [status.to_dict() for status in provider_statuses(config)]
+    provider_family_status_list = [status.to_dict() for status in provider_family_statuses(config)]
 
     records: list[dict[str, Any]] = []
     for entry in entries:
@@ -92,6 +93,7 @@ def run(
         "config": config.to_dict(),
         "capabilities": capabilities,
         "provider_statuses": provider_status_list,
+        "provider_family_statuses": provider_family_status_list,
         "registry": {"backends": registry.names(), "preferred_backends": registry.preferred_backends()},
         "module_statuses": build_module_statuses(config.modules, records, registry.names()),
         "directory_collisions": directory_collisions,
