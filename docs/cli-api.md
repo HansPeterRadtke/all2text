@@ -28,7 +28,7 @@ Python packages are used automatically. External binaries and local model endpoi
 automatically when allowed and available; missing capabilities are reported and are not fatal.
 
 ```bash
-python -m pip install -e '.[documents,images,media,ocr,scientific,cad,geospatial]'
+python -m pip install .
 ```
 
 ## CLI
@@ -158,3 +158,14 @@ The returned manifest is already JSON-safe. It has the same structure as
 
 
 `python -m all2text ...` and `all2text ...` are equivalent entry points. Both call `all2text.cli:main`.
+
+Install and diagnostics commands:
+
+```bash
+python -m pip install .
+python -m all2text SOURCE_FOLDER TARGET_FOLDER
+all2text doctor
+all2text install-tools
+```
+
+The pip command installs the Python package and safe PyPI dependencies. External binaries and model files are detected at runtime or configured explicitly.

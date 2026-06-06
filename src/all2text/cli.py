@@ -7,6 +7,7 @@ from pathlib import Path
 from all2text.api import run
 from all2text.capabilities import capability_report
 from all2text.config import PROFILE_DEFAULTS, load_config, options_with_profile
+from all2text.install_help import install_tools_guidance
 from all2text.jsonsafe import json_dumps
 from all2text.providers import provider_statuses
 from all2text.version import __version__
@@ -47,6 +48,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        import sys
+
+        argv = sys.argv[1:]
+    else:
+        argv = list(argv)
+    if argv and argv[0] == "doctor":
+        argv = ["--capabilities", *argv[1:]]
+    if argv and argv[0] == "install-tools":
+        print(install_tools_guidance())
+        return 0
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.version:

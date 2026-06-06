@@ -4,7 +4,7 @@
 
 ```bash
 cd /data/src/github/all2text
-python -m pip install -e '.[dev]'
+python -m pip install .
 ```
 
 Core tests use only the Python standard library plus pytest.
@@ -73,3 +73,14 @@ CAD extras use Python-version markers so older supported Python runtimes receive
 Document extras constrain lxml on older supported Python runtimes to avoid forcing source builds that require libxml2/libxslt development headers.
 
 Some source-build-heavy PyPI packages are guarded by Python-version markers on older runtimes so the advertised install command does not require system compiler headers or native development libraries.
+
+Install and diagnostics commands:
+
+```bash
+python -m pip install .
+python -m all2text SOURCE_FOLDER TARGET_FOLDER
+all2text doctor
+all2text install-tools
+```
+
+The pip command installs the Python package and safe PyPI dependencies. External binaries and model files are detected at runtime or configured explicitly.

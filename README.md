@@ -35,24 +35,23 @@ Lowest-detail/base install:
 
 ```bash
 cd /data/src/github/all2text
-python -m pip install -e .
+python -m pip install .
 ```
 
 Full PyPI install from source:
 
 ```bash
-python -m pip install -e '.[all-pip,dev]'
+python -m pip install .
 ```
 
 Future package install:
 
 ```bash
-python -m pip install 'all2text[all-pip]'
+python -m pip install all2text
 ```
 
-The `all-pip` extra contains normal PyPI packages only. It does not install external binaries,
-model files, llama.cpp servers, Tesseract itself, ffmpeg/ffprobe, LibreOffice, or system `file`.
-Core `all2text` intentionally keeps heavy dependencies optional. At runtime it automatically uses
+The normal install includes the safe PyPI dependency set. It does not install external binaries,
+model files, llama.cpp servers, Tesseract itself, ffmpeg/ffprobe, LibreOffice, or system `file`. At runtime it automatically uses
 installed Python packages from these extras, detects safe external tools on PATH/default configured
 locations, and safely probes configured/common local OpenAI-compatible endpoints. Missing optional
 capabilities are reported and are not fatal. The config loader uses Python 3.11+ `tomllib`,
@@ -60,7 +59,7 @@ optional `tomli` on older Python, or a small fallback parser for the simple temp
 Optional groups enable native extraction paths when installed:
 
 ```bash
-python -m pip install -e '.[documents,images,media,ocr,scientific,cad,geospatial]'
+python -m pip install .
 ```
 
 `textract` is available as a legacy extra, but it is not part of `all-pip` because practical
@@ -74,6 +73,8 @@ all2text /path/to/source /path/to/output
 python -m all2text /path/to/source /path/to/output
 all2text --config /path/to/all2text.toml /path/to/source /path/to/output
 python -m all2text --capabilities
+all2text doctor
+all2text install-tools
 all2text --capabilities
 ```
 
@@ -267,3 +268,5 @@ CAD extras use Python-version markers so older supported Python runtimes receive
 Document extras constrain lxml on older supported Python runtimes to avoid forcing source builds that require libxml2/libxslt development headers.
 
 Some source-build-heavy PyPI packages are guarded by Python-version markers on older runtimes so the advertised install command does not require system compiler headers or native development libraries.
+
+A normal user does not need dependency extras. From a cloned repository, run `python -m pip install .`; after a future PyPI release, run `python -m pip install all2text`. External binaries and model files remain outside pip and are auto-detected when present. Use `all2text doctor` to inspect detection and `all2text install-tools` for OS-aware external-tool guidance.

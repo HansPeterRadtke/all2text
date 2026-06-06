@@ -339,7 +339,7 @@ def test_python_module_invocation_can_print_capabilities() -> None:
     assert '"provider_statuses"' in completed.stdout
 
 
-def test_all_pip_extra_is_resolvable_on_python38_metadata() -> None:
+def test_normal_dependencies_markitdown_marker() -> None:
     from pathlib import Path
 
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
@@ -347,7 +347,7 @@ def test_all_pip_extra_is_resolvable_on_python38_metadata() -> None:
     assert "  \"markitdown>=0.1\",\n" not in pyproject
 
 
-def test_all_pip_scientific_markers_cover_python38() -> None:
+def test_normal_dependencies_scientific_markers_cover_python38() -> None:
     from pathlib import Path
 
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
@@ -355,7 +355,7 @@ def test_all_pip_scientific_markers_cover_python38() -> None:
     assert "astropy>=6; python_version >= '3.9'" in pyproject
 
 
-def test_all_pip_cad_markers_cover_python38() -> None:
+def test_normal_dependencies_cad_markers_cover_python38() -> None:
     from pathlib import Path
 
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
@@ -363,16 +363,29 @@ def test_all_pip_cad_markers_cover_python38() -> None:
     assert "ezdxf>=1.3; python_version >= '3.9'" in pyproject
 
 
-def test_all_pip_lxml_marker_avoids_python38_source_builds() -> None:
+def test_normal_dependencies_lxml_marker_avoids_python38_source_builds() -> None:
     from pathlib import Path
 
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
     assert "lxml>=4.9,<6; python_version < '3.9'" in pyproject
 
 
-def test_all_pip_excludes_source_build_heavy_packages_on_python38() -> None:
+def test_normal_dependencies_exclude_source_build_heavy_packages_on_python38() -> None:
     from pathlib import Path
 
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
     assert "h5py>=3.10; python_version >= '3.9'" in pyproject
     assert "py7zr>=0.21; python_version >= '3.9'" in pyproject
+
+
+def test_cli_doctor_and_install_tools_commands(capsys) -> None:
+    from all2text.cli import main
+
+    assert main(["doctor"]) == 0
+    doctor_out = capsys.readouterr().out
+    assert '"profile"' in doctor_out
+    assert '"provider_statuses"' in doctor_out
+
+    assert main(["install-tools"]) == 0
+    tools_out = capsys.readouterr().out
+    assert "External tools are not installed by pip" in tools_out
