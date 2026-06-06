@@ -38,3 +38,6 @@ New roadmap items should preserve these gates:
 - exact text preservation tests cover every text-like format added;
 - external command integrations use bounded timeouts and record command availability;
 - manifests stay JSON-safe for custom backend metadata.
+
+
+See also: [Open-source extraction research](open-source-extraction-research-2026.md) for the researched provider/model roadmap.

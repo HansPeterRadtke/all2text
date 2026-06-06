@@ -260,6 +260,7 @@ Detailed docs:
 - [llama.cpp and model setup](docs/llama-cpp-models.md)
 - [Operational log](docs/operational-log.md)
 - [Bootstrap report](docs/final-report.md)
+- [Open-source extraction research](docs/open-source-extraction-research-2026.md)
 
 Scientific extras use Python-version markers so older supported Python runtimes receive compatible package versions where upstream wheels exist.
 
