@@ -545,3 +545,338 @@ Recommended immediate candidates:
 ## 16. Main conclusion
 
 The all2text core should not become one enormous model wrapper. It should become a routing and evidence system. The winning architecture is layered: deterministic extraction first, specialized parser second, OCR/VLM/ASR only for content that needs it, and clear truthfulness everywhere. The next implementation work should therefore build provider contracts and provider-specific output schemas before chasing every model at once.
+
+## 17. Revision pass: ranked candidate sets and confidence
+
+This revision pass was added after a broader search. The conclusion changed from a simple shortlist to a ranked candidate set. For several areas there is no single provable best open-source model. The correct all2text plan is therefore to support two or three strong providers per hard task and benchmark them on our own data.
+
+### 17.1 Document OCR and document parsing
+
+Confidence: high that these are the right candidates; low that one universal winner exists.
+
+Tier 1 candidates:
+
+- PaddleOCR-VL / PaddleOCR-VL-1.5 / PaddleOCR-VL-1.6. This is currently one of the strongest compact open document parsing families. The 2026 PaddleOCR documentation reports PaddleOCR-VL-1.5 at 94.5% on OmniDocBench v1.5, and the PaddleOCR-VL-1.6 paper reports 96.33% on OmniDocBench v1.6. It is especially attractive because it is document-specific and compact rather than a huge general VLM.
+- GLM-OCR. This is another strong compact document OCR/parser candidate. The GLM-OCR technical report describes a 0.9B multimodal OCR model with a two-stage document parsing pipeline and strong performance on document parsing, text, formulas, tables, and key information extraction. Independent model pages also report high throughput around 1.86 PDF pages per second.
+- olmOCR 2. This is a strong PDF/OCR candidate trained with verifiable unit-test rewards. It is especially relevant for natural reading order, math formulas, tables, and multi-column layouts.
+- Docling. This remains the best general integration framework candidate because it is not just an OCR model. It provides document conversion, layout, reading order, tables, formulas, and a unified document representation.
+
+Tier 2 candidates:
+
+- Chandra OCR 2. The project claims state-of-the-art structured OCR to HTML/Markdown/JSON. It should be tested, not blindly trusted.
+- DeepSeek-OCR / DeepSeek-OCR-2. It is interesting because of efficient visual-token compression, but a 2026 analysis warns that its apparent OCR quality may rely heavily on language priors and can collapse under semantic perturbation. It should be treated as a speed/compression candidate, not the most trustworthy extraction provider.
+- Marker, MinerU, Surya. These remain good document-stack alternatives, especially for Markdown/JSON conversion and layout/OCR, but the first implementation target should be Docling plus one or two OCR-specific providers.
+
+Implementation decision:
+
+- Implement Docling as the first high-level document provider if install/runtime behavior is acceptable.
+- Implement PaddleOCR-VL and GLM-OCR as OCR/layout provider candidates.
+- Keep olmOCR2 as a heavier high-quality PDF OCR provider candidate.
+- Keep Tesseract as lightweight fallback only, not as final quality target.
+- Build a local benchmark: scanned PDF, phone-photo document, multi-column scientific article, table-heavy PDF, invoice/form, low-quality scan, handwritten page, equation-heavy page, and multilingual page.
+
+Why we need local benchmarking:
+
+OmniDocBench and related document benchmarks are now under pressure. PureDocBench claims OmniDocBench rankings are affected by annotation quality and contamination risk, and Real5-OmniDocBench shows a large gap between clean digital benchmarks and real physical scans. That means all2text must not choose a winner from one leaderboard only.
+
+Sources:
+
+- https://paddlepaddle.github.io/PaddleOCR/main/en/index.html
+- https://arxiv.org/abs/2606.03264
+- https://arxiv.org/abs/2601.21957
+- https://arxiv.org/abs/2603.10910
+- https://huggingface.co/zai-org/GLM-OCR
+- https://arxiv.org/abs/2510.19817
+- https://olmocr.allenai.org/
+- https://github.com/allenai/olmocr
+- https://docling-project.github.io/docling/
+- https://github.com/datalab-to/chandra
+- https://github.com/deepseek-ai/DeepSeek-OCR/
+- https://arxiv.org/abs/2601.03714
+- https://arxiv.org/abs/2605.07492
+- https://arxiv.org/abs/2603.04205
+
+### 17.2 Tables
+
+Confidence: medium. Native table data is easy; image/PDF table reconstruction is still not solved.
+
+Best practical candidates:
+
+- Native spreadsheet extraction remains the first choice for XLSX/XLS/ODS/CSV/HTML/Markdown tables.
+- Docling / TableFormer-style table extraction is the best general open-source integration candidate for PDFs and document pages.
+- PaddleOCR-VL and GLM-OCR are strong candidates for visual table extraction inside scanned documents.
+- Microsoft Table Transformer trained on PubTables-1M remains a core specialist table detection/structure candidate.
+- PubTables-v2/POTATR is important because it targets full-page and multi-page table extraction, a known gap.
+- pdfplumber and Camelot are still useful for text-layer PDFs, especially when custom heuristics are needed, but they do not solve image/scanned tables.
+- PdfTable is a useful research/engineering reference because it combines multiple OCR, table recognition, and layout-analysis routes.
+
+Implementation decision:
+
+- Keep native spreadsheets as source-of-truth when available.
+- For PDFs, try text-layer extraction first, then Docling/table provider, then OCR/VLM table provider.
+- For image tables, use PaddleOCR-VL/GLM-OCR/Docling/Surya-style table provider candidates and output confidence/source.
+- Add multi-page table merging as a separate phase; do not pretend single-page table extraction solves it.
+
+Sources:
+
+- https://github.com/microsoft/table-transformer
+- https://arxiv.org/abs/2110.00061
+- https://arxiv.org/abs/2512.10888
+- https://arxiv.org/abs/2409.05125
+- https://arxiv.org/abs/2603.18652
+- https://www.llamaindex.ai/insights/best-ai-for-pdf-table-extraction
+
+### 17.3 Image classification and image understanding
+
+Confidence: medium-high for route classification candidates; lower for final semantic descriptions.
+
+Route classification candidates:
+
+- SigLIP 2 should be the first modern zero-shot image route classifier candidate. It is designed for multilingual image-text encoding and zero-shot classification, and current references say it improves over older SigLIP models across core capabilities.
+- CLIP/OpenCLIP remains the fallback because it is simple, widely supported, and easy to run locally.
+- DINOv2/DINO-family embeddings are useful for clustering, deduplication, and similarity, but less directly useful for prompt-label routing than SigLIP/CLIP.
+
+Image/VLM understanding candidates:
+
+- Qwen3-VL is likely the strongest current Qwen-family local VLM candidate where resources allow.
+- Qwen2.5-VL remains practical because of existing llama.cpp/Jetson experiments and quantized availability.
+- InternVL3.5 is a strong open VLM alternative, especially on reasoning benchmarks.
+- Molmo2 is especially interesting for open-weight/data image/video grounding and counting/tracking tasks.
+- SmolVLM2 is a good small-resource fallback for lightweight image/video routes.
+
+Implementation decision:
+
+- Do not use a VLM as the first classifier. Use deterministic image features plus SigLIP/CLIP route classification first.
+- Then route to OCR, chart, document, technical drawing, map/plan, screenshot/UI, photo, or VLM description providers.
+- Keep source-title hints as weak metadata only. Never let a filename override visual evidence.
+- Port the devtests taxonomy and tests into all2text.
+
+Recommended image category hierarchy:
+
+- photo/scene
+- portrait/person/object/product
+- screenshot/UI/webpage/app
+- document page/scan
+- table screenshot
+- chart/plot
+- diagram/flowchart/UML/network graph
+- circuit/electrical schematic
+- mechanical technical drawing
+- architectural floor plan/building plan
+- map/geospatial plan/heat map
+- scientific/medical image
+- painting/illustration/art
+- abstract/texture/pattern
+- logo/icon
+- unknown/ambiguous
+
+Sources:
+
+- https://arxiv.org/html/2502.14786v1
+- https://huggingface.co/blog/siglip2
+- https://docs.openvino.ai/2024/notebooks/siglip-zero-shot-image-classification-with-output.html
+- https://www.bentoml.com/blog/multimodal-ai-a-guide-to-open-source-vision-language-models
+- https://arxiv.org/html/2508.18265v1
+- https://arxiv.org/abs/2601.10611
+- https://blog.roboflow.com/local-vision-language-models/
+
+### 17.4 Charts
+
+Confidence: low that any one model is best; high that the right implementation is multi-provider plus benchmark.
+
+Top candidates to test:
+
+- ChartGemma for chart reasoning, summarization, QA, and fact-checking. It was designed specifically for chart reasoning in the wild.
+- UniChart for lightweight chart QA, chart-to-table, chart summarization, and open-ended chart QA.
+- DePlot / Pix2Struct / MatCha family for chart-to-table baseline extraction. DePlot is still a useful baseline for turning chart images into table-like output.
+- ChartCoder for chart-to-code or chart structural reconstruction when code representation is useful.
+- ChartOCR / DeepRule-style hybrid pipelines for better numeric fidelity and low-level chart primitive extraction.
+- Newer candidates such as ChartVR, ChartSpec, ChartArena/ChartAct benchmark results, and Chart2Code-related work should be watched before locking a final provider.
+
+Important limitation:
+
+Chart understanding is not solved. ChartArena 2026 reports that expert chart parsers remain limited to narrow chart families, diagrammatic structures remain hard, radar charts and hand-drawn scenarios remain difficult, and even leading systems have clear capability gaps. Therefore all2text must not claim “chart extraction” as one solved feature.
+
+Implementation decision:
+
+- Build our own chart benchmark using the devtests technical images plus synthetic charts where ground truth is known.
+- Output structured chart evidence with provider source and confidence.
+- Use multiple providers: deterministic simple chart extractor, OCR, DePlot/UniChart/ChartGemma, VLM synthesis.
+- For embedded Excel charts, prefer workbook source data and chart XML metadata over image reconstruction.
+
+Sources:
+
+- https://arxiv.org/abs/2407.04172
+- https://github.com/vis-nlp/ChartQA
+- https://github.com/vis-nlp/UniChart
+- https://huggingface.co/google/deplot
+- https://arxiv.org/abs/2212.10505
+- https://arxiv.org/abs/2501.06598
+- https://github.com/thunlp/ChartCoder
+- https://arxiv.org/abs/2606.01348
+- https://arxiv.org/abs/2605.26994
+- https://exchart.github.io/
+- https://github.com/khuangaf/Awesome-Chart-Understanding
+
+### 17.5 Audio classification, ASR, and diarization
+
+Confidence: medium-high for ASR candidates; medium for universal audio classification; medium-low for diarization because it is still difficult and domain-dependent.
+
+Audio kind classification candidates:
+
+- YAMNet is the easiest lightweight baseline. It predicts 521 AudioSet classes and is suitable for speech/music/noise/environmental routing.
+- PANNs and AST are stronger older baselines than YAMNet for many AudioSet-style audio tagging tasks.
+- BEATs / EAT / SSLAM / OpenBEATs represent stronger modern audio embedding/classification directions. OpenBEATs is especially attractive because it is fully open and reports strong performance across multi-domain audio tasks.
+- CLAP/LAION-CLAP is useful for text-query-based audio classification and retrieval, but should be tested for our routing labels.
+
+ASR candidates:
+
+- Whisper remains the safest multilingual ecosystem baseline, especially through whisper.cpp or faster-whisper.
+- Canary-Qwen / NVIDIA Canary is a strong current open ASR accuracy candidate.
+- NVIDIA Parakeet TDT v2/v3 is a strong speed and long-form/batch transcription candidate.
+- IBM Granite Speech and Qwen3-ASR should be tracked as additional open ASR candidates where licenses/resources fit.
+
+Diarization candidates:
+
+- pyannote.audio is still the most common open-source diarization toolkit and a strong default.
+- DiariZen is a serious open-source SOTA candidate; 2026 tutorial/benchmark material treats it as leading or very competitive.
+- NVIDIA NeMo SortFormer/MSDD are strong alternatives, especially on NVIDIA hardware.
+
+Important limitation:
+
+No audio classifier can classify “all audio” perfectly. AudioSet/YAMNet-style models cover hundreds of event classes and can route speech/music/noise/environmental sounds, but mixed scenes, rare sounds, overlapping speech/music, and low-quality recordings need confidence thresholds and “mixed/unknown” outputs.
+
+Implementation decision:
+
+- Implement audio route as metadata -> speech/music/noise/mixed classifier -> VAD -> language ID -> ASR -> diarization -> translation.
+- Do not transcribe music/noise-only audio unless speech confidence is high.
+- Default candidate stack: ffprobe + YAMNet/PANNs/OpenBEATs + whisper.cpp/faster-whisper + optional Parakeet/Canary + optional pyannote/DiariZen.
+
+Sources:
+
+- https://www.tensorflow.org/hub/tutorials/yamnet
+- https://github.com/tensorflow/models/blob/master/research/audioset/yamnet/README.md
+- https://www.codesota.com/audio/classification
+- https://arxiv.org/abs/2507.14129
+- https://github.com/openai/whisper
+- https://github.com/ggml-org/whisper.cpp
+- https://github.com/SYSTRAN/faster-whisper
+- https://github.com/m-bain/whisperx
+- https://www.gladia.io/blog/best-open-source-speech-to-text-models
+- https://northflank.com/blog/best-open-source-speech-to-text-stt-model-in-2026-benchmarks
+- https://github.com/pyannote/pyannote-audio
+- https://arxiv.org/abs/2509.26177
+- https://arxiv.org/abs/2604.21507
+
+### 17.6 Video
+
+Confidence: medium for pipeline design; low that a single open model can solve everything.
+
+Video must be decomposed:
+
+- ffprobe metadata
+- embedded subtitle extraction
+- audio extraction -> audio pipeline
+- scene/keyframe detection
+- frame classification
+- OCR on text-heavy frames
+- VLM on selected frames
+- optional video-native VLM for short clips or hard summaries
+
+Best practical tool candidates:
+
+- ffmpeg/ffprobe for metadata, streams, audio extraction, subtitles, and frames.
+- PySceneDetect or OpenCV for scene/keyframe detection.
+- Whisper/faster-whisper/Parakeet/Canary for audio transcription.
+- Tesseract/PaddleOCR-VL/Docling for frame OCR or document/screen frames.
+- Qwen3-VL/Qwen2.5-VL/InternVL3.5 for frame or short-video VLM route.
+- Molmo2 is a major candidate for video grounding/tracking/counting and should be tested when weights/tooling are usable.
+- SmolVLM2 is useful for small-device fallback and low-resource video/image summaries.
+
+Important limitation:
+
+Long-video understanding is not solved. Video-MME-v2 exists because older video benchmarks were becoming saturated and misleading. LongVideoBench and LVBench-style findings show open-source long-video models still lag proprietary systems and fail on detailed retrieval/reasoning. Therefore all2text should use a deterministic timeline pipeline first and VLMs only on selected keyframes or chunks.
+
+Implementation decision:
+
+- First implement subtitles and audio transcription.
+- Then implement keyframe sampling and OCR on frames.
+- Then add VLM summaries on selected frames.
+- Only after that test video-native VLMs.
+
+Sources:
+
+- https://ffmpeg.org/
+- https://github.com/Breakthrough/PySceneDetect
+- https://www.scenedetect.com/similar/
+- https://arxiv.org/abs/2604.05015
+- https://github.com/MME-Benchmarks/Video-MME-v2
+- https://arxiv.org/abs/2407.15754
+- https://arxiv.org/abs/2601.10611
+- https://arxiv.org/abs/2606.04351
+
+### 17.7 CAD, BIM, scientific, geospatial, and binary formats
+
+Confidence: high for metadata/schema tools, low for deep semantic “understanding” without domain-specific providers.
+
+CAD/BIM candidates:
+
+- ezdxf for DXF is the first Python implementation route.
+- IfcOpenShell is the first IFC/BIM route.
+- FreeCAD/OpenCascade/CadQuery are external/heavy routes for STEP/IGES/solid geometry.
+- DWG remains a hard binary CAD case. It should stay safe-summary unless a configured converter is present.
+
+Scientific candidates:
+
+- h5py/h5netcdf/netCDF4 for HDF5/NetCDF.
+- astropy for FITS.
+- pyarrow for Parquet/Arrow.
+- scipy/numpy for common array files.
+- Zarr should be considered as another array/container provider.
+
+Geospatial candidates:
+
+- pyshp, pyproj, shapely for light geospatial extraction.
+- GDAL/Rasterio/Fiona/GeoPandas/pyogrio are powerful but packaging-heavy and should remain optional/external until tested.
+
+Binary/executable candidates:
+
+- pefile for PE metadata.
+- macholib for Mach-O metadata.
+- LIEF for cross-format binary parsing if installable.
+- capa for security capability summaries.
+- radare2/rabin2 for external deep static analysis, never default execution.
+
+Implementation decision:
+
+- First output metadata/schema/entity summaries, not huge dumps.
+- Never execute binaries.
+- Never dump huge arrays by default.
+- Keep source offsets, samples, counts, dimensions, dtypes, CRS, layers, entity counts, imports/exports, and warnings.
+
+Sources:
+
+- https://ezdxf.readthedocs.io/en/stable/introduction.html
+- https://ifcopenshell.org/
+- https://github.com/IfcOpenShell/IfcOpenShell
+- https://www.unidata.ucar.edu/software/netcdf/software
+- https://www.h5py.org/
+- https://h5netcdf.org/index.html
+- https://mandiant.github.io/capa/
+- https://radare2.com/
+
+## 18. Revised implementation priority after second research pass
+
+1. Strengthen `doctor` and discovery first: tools, Python packages, model endpoints, llama.cpp processes, version checks, and clear blockers.
+2. Build an internal benchmark harness before adding many heavy providers. The benchmark must cover scanned documents, tables, charts, images, audio classes, ASR, video, CAD/scientific samples, and binary samples.
+3. Add Docling provider and one OCR/parser provider candidate: PaddleOCR-VL or GLM-OCR first.
+4. Port the devtests image taxonomy and routing tests into all2text.
+5. Add SigLIP2/CLIP route classifier provider.
+6. Add chart output schema and then test DePlot, UniChart, ChartGemma, and ChartCoder/ChartOCR candidates.
+7. Add audio classifier and ASR provider contracts; test YAMNet/PANNs/OpenBEATs/CLAP and whisper.cpp/faster-whisper/Parakeet/Canary.
+8. Add video pipeline using ffmpeg/ffprobe, subtitles, audio route, keyframes, OCR, VLM frames. Test video VLMs later.
+9. Add CAD/scientific/geospatial/binary schema providers.
+
+## 19. Revised main conclusion
+
+There is no honest single best provider for everything. Some tasks have likely leaders, but most need provider competition. The best all2text design is therefore a ranked, swappable provider system with local benchmarks. The candidates above are not random first hits; they are the current serious open/free candidates found in a second research pass. The next code work should implement evaluation harnesses and provider contracts before hardwiring any one “best” model.
