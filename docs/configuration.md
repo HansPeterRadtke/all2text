@@ -248,3 +248,13 @@ Provider booleans in manifests mean what they say:
 
 Unavailable providers are not silent failures. Outputs include provider status, fallback reasons,
 and limitations so downstream ingestion can distinguish extracted text from a safe summary.
+
+MarkItDown is included in the PyPI extras only on Python versions where the published package is resolvable; the native all2text document backends do not depend on it.
+
+Scientific extras use Python-version markers so older supported Python runtimes receive compatible package versions where upstream wheels exist.
+
+CAD extras use Python-version markers so older supported Python runtimes receive compatible ezdxf versions where upstream wheels exist.
+
+Document extras constrain lxml on older supported Python runtimes to avoid forcing source builds that require libxml2/libxslt development headers.
+
+Some source-build-heavy PyPI packages are guarded by Python-version markers on older runtimes so the advertised install command does not require system compiler headers or native development libraries.

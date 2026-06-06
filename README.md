@@ -65,6 +65,7 @@ python -m pip install -e '.[documents,images,media,ocr,scientific,cad,geospatial
 
 `textract` is available as a legacy extra, but it is not part of `all-pip` because practical
 operation often depends on external converter binaries and older Python dependency constraints.
+MarkItDown is included in the PyPI extras only on Python versions where the published package is resolvable; the native all2text document backends do not depend on it.
 
 ## CLI
 
@@ -258,3 +259,11 @@ Detailed docs:
 - [llama.cpp and model setup](docs/llama-cpp-models.md)
 - [Operational log](docs/operational-log.md)
 - [Bootstrap report](docs/final-report.md)
+
+Scientific extras use Python-version markers so older supported Python runtimes receive compatible package versions where upstream wheels exist.
+
+CAD extras use Python-version markers so older supported Python runtimes receive compatible ezdxf versions where upstream wheels exist.
+
+Document extras constrain lxml on older supported Python runtimes to avoid forcing source builds that require libxml2/libxslt development headers.
+
+Some source-build-heavy PyPI packages are guarded by Python-version markers on older runtimes so the advertised install command does not require system compiler headers or native development libraries.

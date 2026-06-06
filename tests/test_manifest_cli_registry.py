@@ -337,3 +337,42 @@ def test_python_module_invocation_can_print_capabilities() -> None:
     assert completed.returncode == 0
     assert '"profile"' in completed.stdout
     assert '"provider_statuses"' in completed.stdout
+
+
+def test_all_pip_extra_is_resolvable_on_python38_metadata() -> None:
+    from pathlib import Path
+
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert "markitdown>=0.1; python_version >= '3.10'" in pyproject
+    assert "  \"markitdown>=0.1\",\n" not in pyproject
+
+
+def test_all_pip_scientific_markers_cover_python38() -> None:
+    from pathlib import Path
+
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert "astropy>=5.2,<6; python_version < '3.9'" in pyproject
+    assert "astropy>=6; python_version >= '3.9'" in pyproject
+
+
+def test_all_pip_cad_markers_cover_python38() -> None:
+    from pathlib import Path
+
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert "ezdxf>=1.1,<1.2; python_version < '3.9'" in pyproject
+    assert "ezdxf>=1.3; python_version >= '3.9'" in pyproject
+
+
+def test_all_pip_lxml_marker_avoids_python38_source_builds() -> None:
+    from pathlib import Path
+
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert "lxml>=4.9,<6; python_version < '3.9'" in pyproject
+
+
+def test_all_pip_excludes_source_build_heavy_packages_on_python38() -> None:
+    from pathlib import Path
+
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert "h5py>=3.10; python_version >= '3.9'" in pyproject
+    assert "py7zr>=0.21; python_version >= '3.9'" in pyproject
