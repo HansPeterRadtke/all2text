@@ -12,9 +12,13 @@ def install_tools_guidance(system: str | None = None) -> str:
     if name.startswith("linux"):
         body = """
         all2text itself is installed with: python -m pip install .
+        Then inspect external setup with:
+          python -m all2text setup --dry-run --profile full
 
-        External tools are not installed by pip. all2text will auto-detect them if present.
-        Common Debian/Ubuntu packages:
+        Modern pip/wheel installs must stay noninteractive, so external binaries and model
+        weights are managed by all2text setup after package installation. It can build/download
+        safe user-space components when requested with --yes, and reports exact blockers for
+        root/system packages. Common Debian/Ubuntu package commands:
           sudo apt-get update
           sudo apt-get install -y ffmpeg tesseract-ocr libmagic1 file acl libreoffice
 
@@ -26,17 +30,19 @@ def install_tools_guidance(system: str | None = None) -> str:
         with binary-only pip first, for example:
           python -m pip install --only-binary=:all: mutagen h5py netCDF4 astropy pyarrow ezdxf pyshp pyproj pefile macholib lief faster-whisper
 
-        Heavy document/VLM/ASR/diarization model weights are not installed by all2text. Put them
-        under an external model root such as /data/models and configure provider model_path values.
-        Avoid installing Jetson Torch/torchaudio replacements unless they match NVIDIA's local
-        PyTorch build.
+        Heavy document/VLM/ASR/diarization model weights are never downloaded by default. Put them
+        under an external model root such as /data/models, or select a bounded setup model
+        explicitly. Avoid installing Jetson Torch/torchaudio replacements unless they match
+        NVIDIA's local PyTorch build.
         """
     elif name.startswith("windows"):
         body = """
         all2text itself is installed with: python -m pip install .
+        Then inspect external setup with:
+          python -m all2text setup --dry-run --profile full
 
-        External tools are not installed by pip. all2text will auto-detect them if present on PATH
-        or if configured explicitly. Common Windows options:
+        Modern pip/wheel installs must stay noninteractive, so external binaries and model
+        weights are managed by all2text setup after package installation. Common Windows commands:
           winget install Gyan.FFmpeg
           winget install UB-Mannheim.TesseractOCR
           winget install TheDocumentFoundation.LibreOffice
@@ -48,9 +54,11 @@ def install_tools_guidance(system: str | None = None) -> str:
     elif name.startswith("darwin"):
         body = """
         all2text itself is installed with: python -m pip install .
+        Then inspect external setup with:
+          python -m all2text setup --dry-run --profile full
 
-        External tools are not installed by pip. all2text will auto-detect them if present.
-        Common Homebrew packages:
+        Modern pip/wheel installs must stay noninteractive, so external binaries and model
+        weights are managed by all2text setup after package installation. Common Homebrew commands:
           brew install ffmpeg tesseract libmagic libreoffice
 
         llama.cpp and model files are external. Start an OpenAI-compatible llama.cpp server and use
@@ -59,10 +67,13 @@ def install_tools_guidance(system: str | None = None) -> str:
     else:
         body = """
         all2text itself is installed with: python -m pip install .
+        Then inspect external setup with:
+          python -m all2text setup --dry-run --profile full
 
-        External tools are not installed by pip. Install ffmpeg/ffprobe, Tesseract, LibreOffice,
-        and llama.cpp using your OS package manager or vendor instructions. all2text will detect
-        them automatically when they are on PATH, or you can configure absolute paths and endpoint
-        URLs in the TOML config.
+        Modern pip/wheel installs must stay noninteractive, so external binaries and model
+        weights are managed by all2text setup after package installation. Install ffmpeg/ffprobe,
+        Tesseract, LibreOffice, and llama.cpp using the setup report, your OS package manager, or
+        vendor instructions. all2text will detect them automatically when they are on PATH, or you
+        can configure absolute paths and endpoint URLs in the TOML config.
         """
     return textwrap.dedent(body).strip() + "\n"

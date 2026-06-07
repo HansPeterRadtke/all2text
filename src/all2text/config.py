@@ -254,7 +254,14 @@ RUN_OPTION_BOOL_FIELDS = {
     "allow_optional_python",
     "use_file_command",
     "copy_source_stat",
+    "interactive_setup_prompt",
     "reject_target_inside_source",
+}
+
+RUN_OPTION_STRING_FIELDS = {
+    "setup_models_dir",
+    "setup_report_path",
+    "setup_tools_dir",
 }
 
 KNOWN_TOOL_NAMES = {
@@ -628,6 +635,8 @@ def _run_options_from_dict(
                 )
             elif key in RUN_OPTION_BOOL_FIELDS:
                 values[key] = _coerce_bool(data[key], field, source_path=source_path)
+            elif key in RUN_OPTION_STRING_FIELDS:
+                values[key] = str(data[key] or "")
             else:
                 values[key] = data[key]
     return RunOptions(**values)
@@ -673,6 +682,8 @@ def validate_config(config: All2TextConfig) -> None:
                 source_path=config.source_path,
             ),
         )
+    for field_name in RUN_OPTION_STRING_FIELDS:
+        setattr(config.options, field_name, str(getattr(config.options, field_name) or ""))
     for family, module in config.modules.items():
         if module.backend not in KNOWN_BACKEND_NAMES:
             allowed = ", ".join(sorted(KNOWN_BACKEND_NAMES))

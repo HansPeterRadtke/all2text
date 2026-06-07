@@ -2,6 +2,8 @@
 
 Near-term:
 
+- Harden the external setup command with more provider-specific installers as upstream Jetson/aarch64
+  packages become practical.
 - MarkItDown backend for broad document extraction.
 - PDF scanned-page rendering/OCR fallback with bounded external commands.
 - More complete OpenDocument spreadsheet/presentation handling.
@@ -33,6 +35,8 @@ Long-term:
 New roadmap items should preserve these gates:
 
 - no external model or binary artifact committed to the repository;
+- normal pip/wheel installs remain noninteractive; external setup uses explicit `all2text setup`
+  commands and user/runtime storage;
 - placeholder behavior remains truthful when optional dependencies are absent;
 - exact text preservation tests cover every text-like format added;
 - external command integrations use bounded timeouts and record command availability;

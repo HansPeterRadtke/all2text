@@ -170,6 +170,9 @@ def resolve_external_tool(config: object | None, name: str) -> dict[str, Any]:
         elif cfg.options.auto_detect_tools or configured.enabled is True:
             source = shutil.which(executable)
             auto_detected = bool(source)
+            if not source:
+                source = setup_managed_tool_path(cfg, name, executable)
+                auto_detected = bool(source)
         if not source:
             error = f"{configured_path or executable} executable not found"
     return {
@@ -192,6 +195,31 @@ def _path_exists(path: str) -> bool:
         return Path(path).exists()
     except Exception:
         return False
+
+
+def setup_managed_tool_path(config: All2TextConfig, name: str, executable: str) -> str | None:
+    try:
+        from pathlib import Path
+
+        from all2text.external_setup import default_tools_dir
+
+        configured_root = str(getattr(config.options, "setup_tools_dir", "") or "")
+        root = Path(configured_root).expanduser() if configured_root else default_tools_dir()
+        candidates = {
+            "whisper_cpp": [
+                root / "whisper.cpp" / "build" / "bin" / "whisper-cli",
+                root / "whisper.cpp" / "main",
+            ],
+            "capa": [root / "capa-venv" / "bin" / "capa"],
+            "radare2": [root / "radare2" / "bin" / "radare2", root / "radare2" / "bin" / "rabin2"],
+        }.get(name, [])
+        candidates.append(root / name / "bin" / executable)
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+    except Exception:
+        return None
+    return None
 
 
 def tool_enabled(config: All2TextConfig, name: str) -> bool:

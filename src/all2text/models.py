@@ -23,6 +23,10 @@ class RunOptions:
     allow_local_models: bool = True
     copy_source_stat: bool = True
     reject_target_inside_source: bool = True
+    interactive_setup_prompt: bool = True
+    setup_tools_dir: str = ""
+    setup_models_dir: str = ""
+    setup_report_path: str = ""
 
 
 @dataclass

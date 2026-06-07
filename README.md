@@ -57,11 +57,30 @@ python -m pip install all2text
 ```
 
 The normal install includes the safe PyPI dependency set. It does not install external binaries,
-model files, llama.cpp servers, Tesseract itself, ffmpeg/ffprobe, LibreOffice, or system `file`. At runtime it automatically uses
-installed Python packages from these extras, detects safe external tools on PATH/default configured
-locations, and safely probes configured/common local OpenAI-compatible endpoints. Missing optional
-capabilities are reported and are not fatal. The config loader uses Python 3.11+ `tomllib`,
-optional `tomli` on older Python, or a small fallback parser for the simple template shipped here.
+model files, llama.cpp servers, Tesseract itself, ffmpeg/ffprobe, LibreOffice, or system `file`.
+Modern pip/wheel/PEP517 installs must be noninteractive and automation-safe, so all2text does not
+fake a pip postinstall prompt. Use the supported setup helper after installation:
+
+```bash
+python -m all2text setup --dry-run --profile full
+python -m all2text setup --yes --tools --models minimal
+python -m all2text SOURCE TARGET
+```
+
+`all2text setup` detects installed tools/models, prints package-manager commands for root/system
+tools, builds safe user-space tools such as whisper.cpp when selected and build prerequisites exist,
+and downloads only explicitly selected bounded model assets. Useful setup flags include `--plan`,
+`--json`, `--tools`, `--models`, `--target`, `--skip-models`, `--skip-root`, `--skip-heavy`, and
+`--profile full`. Runtime reports are written under a user state directory by default, not into the
+repository.
+
+At runtime all2text automatically uses installed Python packages from these extras, detects safe
+external tools on PATH/default configured locations, and safely probes configured/common local
+OpenAI-compatible endpoints. Missing optional capabilities are reported and are not fatal. If a
+conversion needs an enabled external provider and stdin/stdout are interactive, all2text can offer
+to run the setup helper; in noninteractive mode it never waits for input and prints the exact setup
+command instead. The config loader uses Python 3.11+ `tomllib`, optional `tomli` on older Python, or
+a small fallback parser for the simple template shipped here.
 Optional groups enable native extraction paths when installed:
 
 ```bash
@@ -80,6 +99,8 @@ python -m all2text /path/to/source /path/to/output
 all2text --config /path/to/all2text.toml /path/to/source /path/to/output
 python -m all2text --capabilities
 all2text doctor
+all2text setup --dry-run --profile full
+python -m all2text setup --yes --tools --models minimal
 all2text install-tools
 all2text --capabilities
 ```

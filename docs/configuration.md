@@ -39,6 +39,10 @@ auto_detect_local_models = true
 allow_optional_python = true
 allow_external_tools = true
 allow_local_models = true
+interactive_setup_prompt = true
+setup_tools_dir = ""
+setup_models_dir = ""
+setup_report_path = ""
 ```
 
 Config is mainly for overrides and controls. Explicit config wins over automatic discovery:
@@ -50,6 +54,45 @@ Config is mainly for overrides and controls. Explicit config wins over automatic
 - set `allow_external_tools = false` or `allow_local_models = false` to block those classes entirely;
 - set tool paths, executable names, provider base URLs, models, timeouts, and `auto_invoke`
   behavior in the relevant sections.
+
+## External Setup
+
+Normal package installation remains:
+
+```bash
+python -m pip install .
+```
+
+External binaries, servers, and model weights are managed after installation because modern
+pip/wheel/PEP517 installs must not block for interactive prompts or mutate system state behind the
+installer. The supported flow is:
+
+```bash
+python -m all2text setup --dry-run --profile full
+python -m all2text setup --yes --tools --models minimal
+python -m all2text /path/to/source /path/to/output
+```
+
+`all2text setup` generates a platform-aware plan for Linux, macOS, and Windows. It marks tools and
+models as `satisfied`, `installable`, or `blocked`, records exact apt/brew/winget/manual commands
+where root or platform setup is required, and writes its last report under a user state path by
+default. It supports noninteractive-safe flags: `--yes`, `--dry-run`, `--plan`, `--json`, `--tools`,
+`--models`, `--target`, `--skip-models`, `--skip-root`, `--skip-heavy`, and `--profile`.
+
+Setup storage can be configured without changing provider settings:
+
+```toml
+[run]
+interactive_setup_prompt = true
+setup_tools_dir = "/data/opt/all2text-tools"
+setup_models_dir = "/data/models/all2text"
+setup_report_path = "/home/user/.local/state/all2text/setup-report.json"
+```
+
+When a conversion needs an enabled external provider and `interactive_setup_prompt = true`, all2text
+offers the setup helper only when stdin and stdout are real terminals. In CI, scripts, pipes, and
+other noninteractive runs, it never waits for input; it prints the exact setup command to stderr and
+continues with truthful fallback behavior.
 
 ## Advanced Profiles
 

@@ -308,3 +308,148 @@ Remaining blockers and next best step:
 - The next best technical step is PDF page rendering plus OCR fallback, followed by per-frame OCR/VLM
   analysis over the new ffmpeg frame sampler, because those build directly on executable providers
   now in place.
+
+## 2026-06-07 - External setup system session baseline
+
+Context and startup:
+
+- Worktree: `/data/src/github/all2text`; repo edits are limited to this repository.
+- Read-only reference only: `/data/src/github/devtests/rag_tests`; no devtests, KnowMoreDiRT, DRT,
+  unrelated repo, model, cache, generated output, or runtime-log files are to be modified.
+- Visible shell settings did not expose model/reasoning variables; user context states
+  `codex resume --last --yolo`, model `gpt-5.5`, xhigh reasoning.
+- Baseline status: clean `master`, head
+  `3e0d646869d6601f566cef0e41412d0ac50e2c80`
+  (`Implement real provider execution adapters`).
+- Recent commits inspected: `3e0d646`, `d231a05`, `4a53b43`, `df793f7`, `97828d6`, `4feb06b`,
+  `1007569`, and `6c5c403`.
+
+Baseline doctor and environment:
+
+- `python -m all2text doctor` succeeded and emitted JSON capabilities/provider status. It reported
+  present external tools `ffmpeg`, `ffprobe`, `file`, `getfacl`, and `tesseract`; missing external
+  tools `whisper_cpp`, `radare2`, and `capa`; and a reachable text LLM endpoint at
+  `http://127.0.0.1:14829/v1`.
+- Jetson platform: Linux `5.10.216-tegra`, `aarch64`, Python `3.8.10`, GCC `9.4.0`.
+- External tools present by direct probe: `/usr/bin/ffmpeg`, `/usr/bin/ffprobe`,
+  `/usr/bin/tesseract`, `/usr/bin/file`, `/usr/bin/getfacl`, `/usr/bin/libreoffice`,
+  `/home/hans/.local/bin/cmake`, `/usr/bin/make`, `/usr/bin/gcc`, `/usr/bin/g++`,
+  `/usr/bin/clang`, `/usr/bin/git`, `/usr/bin/curl`, and `/usr/bin/wget`.
+- External tools absent by direct probe: `whisper-cli`, `whisper.cpp`, `whisper_cpp`,
+  `llama-server`, `llama-cli`, `main`, `radare2`, `rabin2`, `capa`, `conda`, `mamba`, and
+  `micromamba`.
+- Endpoint probe: `http://127.0.0.1:14829/v1` reachable with
+  `Qwen2.5-14B-Instruct-Q4_K_M.gguf`; `14830`, `8080`, `8000`, `1234`, and `11434` were not
+  reachable.
+- Model roots: `/data/models` exists; `/data/models/all2text` and `/data/opt` were absent at
+  baseline. Existing relevant models include faster-whisper tiny/tiny.en snapshots,
+  Qwen2.5 text GGUF files under `/data/models/gguf`, Qwen2.5-VL GGUF/mmproj under
+  `/data/models/llama_cpp/qwen2.5-vl-3b-q4`, and DePlot/UniChart directories under
+  `/data/models/rag_tests/vision`.
+
+Required product direction for this session:
+
+- Do not fake pip postinstall prompts. Modern pip/wheel/PEP517 installs must remain automation-safe:
+  `python -m pip install .` now, and later `python -m pip install all2text` from PyPI.
+- Implement the professional equivalent external setup flow: `all2text setup`,
+  `python -m all2text setup`, noninteractive flags, dry-run/plan output, persisted setup reports,
+  doctor integration, and optional first-run interactive prompting only when stdin/stdout are real
+  terminals.
+
+## 2026-06-07 - External setup system completion report
+
+Audio-style report:
+
+- Visible model/reasoning settings: shell environment did not expose model variables; supervisor/user
+  context stated Codex resume, model `gpt-5.5`, xhigh reasoning.
+- Product result: implemented `all2text setup` and `python -m all2text setup` with platform-aware
+  planning, interactive yes/no prompting only on real terminals, noninteractive `--yes`, `--dry-run`,
+  `--plan`, `--json`, `--tools`, `--models`, `--target`, `--skip-models`, `--skip-root`,
+  `--skip-heavy`, and `--profile` flags.
+- Normal install status: `python -m pip install .` built and installed `all2text-0.1.0`
+  noninteractively. No pip postinstall hook or prompt was added. README/config docs now state why
+  modern pip/wheel/PEP517 installs must stay noninteractive and show the supported setup flow.
+- Doctor/conversion integration: `doctor` now includes the setup plan and last setup report.
+  Conversion checks unavailable enabled auto-invoked providers; interactive terminals may offer setup,
+  while noninteractive mode prints the exact setup command and never waits for input.
+- Config/API status: public Python API remains unchanged. New run config keys are
+  `interactive_setup_prompt`, `setup_tools_dir`, `setup_models_dir`, and `setup_report_path`.
+
+Jetson setup actions actually run:
+
+- Full dry-run before installs showed whisper.cpp as safe installable and core system tools already
+  present. After setup, full dry-run summary was `satisfied=14`, `installable=3`, `blocked=7`, with
+  no remaining `safe_installable` actions.
+- Built ggml-org whisper.cpp from source under `/data/opt/all2text-tools/whisper.cpp`; source commit
+  inspected as `a8ec021`. The resulting executable is
+  `/data/opt/all2text-tools/whisper.cpp/build/bin/whisper-cli`, and `whisper-cli --help` ran.
+- Downloaded bounded whisper.cpp tiny model under
+  `/data/models/all2text/whisper.cpp/ggml-tiny.bin` (`75M`). The upstream shell script failed first
+  because Jetson `curl` lacks `--retry-all-errors`; the setup installer then succeeded through the
+  new Python direct-download fallback.
+- Setup-managed discovery now marks `whisper_cpp` available without requiring PATH edits. Installed
+  setup smoke confirmed `whisper_cpp` and `whisper_cpp_tiny` are both satisfied.
+- Existing local assets detected: faster-whisper tiny/tiny.en snapshots, Qwen text GGUFs,
+  Qwen2.5-VL GGUF/mmproj files, DePlot, and UniChart. No huge model download was performed.
+
+Exact blockers still reported:
+
+- `radare2`/`rabin2`: not installed; setup reports
+  `sudo apt-get update && sudo apt-get install -y radare2`. Source builds are not automatic because
+  they are long and system-sensitive.
+- `capa`: not installed; current Python is `3.8.10`, recent flare-capa needs newer Python, and no
+  Python 3.9+ pipx route was available. Setup reports:
+  `python3.10 -m pip install --user pipx && python3.10 -m pipx install flare-capa`.
+- `faster_whisper_base`, `faster_whisper_small`, and `whisper_cpp_base`: deliberately not downloaded
+  by default; rerun with explicit model selection if needed.
+- `chartgemma`, `paddleocr_vl`, `glm_ocr`, `olmocr`, and `docling`: blocked as large/gated or best
+  isolated in a Python 3.10/3.11 environment, container, or external service.
+
+Verification:
+
+- `PYTHONPYCACHEPREFIX=/tmp/all2text-pycache python -m py_compile ...` passed for changed modules.
+- `PYTHONPYCACHEPREFIX=/tmp/all2text-pycache python -m compileall -q src tests` passed.
+- Focused tests passed: `pytest -q tests/test_external_setup.py` and the CLI/config/provider-focused
+  selection including `tests/test_manifest_cli_registry.py`, `tests/test_profiles_capabilities.py`,
+  and `tests/test_configured_providers_and_documents.py`.
+- Full pytest passed after final edits with only the existing warning:
+  `PytestConfigWarning: Unknown config option: pythonpath`.
+- `git diff --check` passed.
+- `python -m ruff --version` failed with `No module named ruff`; ruff was not run.
+- Installed CLI smoke passed:
+  `python -m all2text setup --dry-run --tools whisper_cpp --models whisper_cpp_tiny --skip-root --skip-heavy --json`
+  reported both selected actions satisfied.
+- Installed `python -m all2text doctor` reported setup counts `satisfied=14`, `blocked=10`, and
+  external tool `whisper_cpp` available at the setup-managed path.
+- Installed smoke conversion under `/tmp` converted one text file with `--profile core`; manifest
+  recorded `interactive_setup_prompt=true`.
+
+Hardcoding and scope scan:
+
+- Production-code scan found no benchmark/question/fixture-specific branches, hidden-answer use,
+  expected-answer literals, current-failure entity branches, or owner/reviewer/customer/ticket/runbook
+  domain handlers.
+- New production model names are setup-plan provider/model categories, not benchmark-specific answer
+  logic. Existing documentation references to `/data/src/github/devtests/rag_tests` remain read-only
+  lineage notes.
+- No devtests, KnowMoreDiRT, DRT, unrelated repositories, unrelated logs, or repo-local model/cache/
+  runtime artifacts were modified or committed.
+
+Score and benchmark status:
+
+- No internal all2text benchmark was run, and no DRT-style score applies to this repository.
+  Official full score, verified targeted/implied score, filtered benchmark results, and fixed/still
+  failing benchmark counts are not applicable for this all2text setup task.
+- The validation signal for this checkpoint is local tests, installed CLI setup/doctor smoke,
+  installed conversion smoke, and the actual Jetson user-space whisper.cpp/tiny-model setup.
+
+Commit/push:
+
+- Commit hash before log-hash amend: `43bfdb49bc70467a6af31aefbd558c2765e8e7c7`.
+- Final amended commit hash is recorded in git history and was pushed to `origin/master`.
+
+Next best step:
+
+- Add real execution wiring for the now-installed whisper.cpp route, then continue with PDF rendering
+  plus OCR fallback and frame OCR/VLM processing. For binary metadata, install radare2 through the OS
+  package manager or provide an external path; for capa, use a Python 3.10/3.11 isolated environment.

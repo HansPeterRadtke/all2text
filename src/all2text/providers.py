@@ -1096,6 +1096,8 @@ def model_roots() -> list[Path]:
     roots: list[Path] = []
     for value in (
         os.environ.get("ALL2TEXT_MODEL_ROOT"),
+        os.environ.get("ALL2TEXT_MODELS_DIR"),
+        "/data/models/all2text",
         "/data/models",
     ):
         if not value:
@@ -1149,7 +1151,23 @@ def _bounded_model_files(root: Path, *, max_depth: int, max_files: int) -> list[
 def _which_executable(name: str) -> str | None:
     import shutil
 
-    return shutil.which(name)
+    found = shutil.which(name)
+    if found:
+        return found
+    try:
+        from all2text.external_setup import default_tools_dir
+
+        root = default_tools_dir()
+        for candidate in (
+            root / "whisper.cpp" / "build" / "bin" / name,
+            root / "capa-venv" / "bin" / name,
+            root / "radare2" / "bin" / name,
+        ):
+            if candidate.exists():
+                return str(candidate)
+    except Exception:
+        return None
+    return None
 
 
 def _family_for_endpoint_task(task: str) -> str | None:

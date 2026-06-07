@@ -18,6 +18,10 @@ allow_external_tools = true
 allow_local_models = true
 copy_source_stat = true
 reject_target_inside_source = true
+interactive_setup_prompt = true
+setup_tools_dir = ""
+setup_models_dir = ""
+setup_report_path = ""
 
 [modules]
 text = "text_exact_backend"

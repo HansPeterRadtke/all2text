@@ -389,4 +389,4 @@ def test_cli_doctor_and_install_tools_commands(capsys) -> None:
 
     assert main(["install-tools"]) == 0
     tools_out = capsys.readouterr().out
-    assert "External tools are not installed by pip" in tools_out
+    assert "python -m all2text setup --dry-run --profile full" in tools_out
