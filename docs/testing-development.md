@@ -7,7 +7,11 @@ cd /data/src/github/all2text
 python -m pip install .
 ```
 
-Core tests use only the Python standard library plus pytest.
+Source installs can invoke the external setup hook. In CI or scripted test installs, set
+`ALL2TEXT_SETUP_NONINTERACTIVE=1` for report-only no-prompt behavior, or
+`ALL2TEXT_SETUP_ASSUME_YES=1` with explicit tool/model selectors when a job intentionally provisions
+external assets. Use `ALL2TEXT_SETUP_COMMAND_TIMEOUT_SECONDS` when a job intentionally provisions a
+large isolated provider environment. Core tests use only the Python standard library plus pytest.
 
 ## Checks
 
@@ -80,7 +84,10 @@ Install and diagnostics commands:
 python -m pip install .
 python -m all2text SOURCE_FOLDER TARGET_FOLDER
 all2text doctor
+python -m all2text setup --dry-run --profile full
 all2text install-tools
 ```
 
-The pip command installs the Python package and safe PyPI dependencies. External binaries and model files are detected at runtime or configured explicitly.
+The pip command installs the Python package and safe PyPI dependencies, and source installs can run
+the external setup hook. Wheel installs cannot run arbitrary postinstall code, so the `all2text setup`
+command remains the manual/developer rerun.

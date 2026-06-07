@@ -24,11 +24,15 @@ DEFAULT_ENDPOINTS = (
     "http://127.0.0.1:11434/v1",
 )
 TRUE_VALUES = {"1", "true", "yes", "on"}
+FALSE_VALUES = {"0", "false", "no", "off"}
+SETUP_MODES = {"minimal", "full", "tools", "models", "plan", "skip"}
+PIP_SETUP_DEFAULT_MODE = "minimal"
 
 
 @dataclass(frozen=True)
 class SetupOptions:
     profile: str = "full"
+    mode: str = "full"
     include_tools: bool = True
     include_models: bool = True
     selected_tools: tuple[str, ...] = ()
@@ -36,9 +40,12 @@ class SetupOptions:
     dry_run: bool = False
     json_output: bool = False
     yes: bool = False
+    noninteractive: bool = False
     skip_root: bool = False
     skip_heavy: bool = False
     skip_models: bool = False
+    strict: bool = False
+    source: str = "cli"
     target: str = ""
     tools_dir: str = ""
     models_dir: str = ""
@@ -63,6 +70,9 @@ class SetupAction:
     safe_to_run: bool = False
     blockers: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    approx_size: str = ""
+    time_note: str = ""
+    confirmation: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -90,6 +100,97 @@ def default_report_path() -> Path:
         return Path(os.environ["ALL2TEXT_SETUP_REPORT"]).expanduser()
     state_root = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))).expanduser()
     return state_root / "all2text" / "setup-report.json"
+
+
+def setup_options_from_environment(
+    env: dict[str, str] | None = None,
+    *,
+    source: str = "pip_install",
+    default_mode: str = PIP_SETUP_DEFAULT_MODE,
+) -> SetupOptions:
+    """Build setup options from environment variables accepted by pip and CI."""
+
+    values = env if env is not None else os.environ
+    mode = normalize_setup_mode(values.get("ALL2TEXT_SETUP_MODE"), default=default_mode)
+    profile = values.get("ALL2TEXT_SETUP_PROFILE") or ("full" if mode == "full" else "minimal")
+    if profile == "all":
+        profile = "full"
+    tools_only = env_bool(values, "ALL2TEXT_SETUP_TOOLS_ONLY", False) or mode == "tools"
+    models_only = env_bool(values, "ALL2TEXT_SETUP_MODELS_ONLY", False) or mode == "models"
+    include_tools = not models_only
+    include_models = not tools_only
+    if env_bool(values, "ALL2TEXT_SETUP_SKIP_MODELS", False):
+        include_models = False
+    selected_tools = split_env_selectors(values.get("ALL2TEXT_SETUP_TOOLS"))
+    selected_models = split_env_selectors(values.get("ALL2TEXT_SETUP_MODELS"))
+    if mode == "minimal" and include_models and not selected_models:
+        selected_models = ("minimal",)
+    dry_run = env_bool(values, "ALL2TEXT_SETUP_DRY_RUN", False) or mode == "plan"
+    yes = (
+        env_bool(values, "ALL2TEXT_SETUP_ASSUME_YES", False)
+        or env_bool(values, "ALL2TEXT_SETUP_YES", False)
+    )
+    default_skip_heavy = mode != "full"
+    return SetupOptions(
+        profile=profile,
+        mode=mode,
+        include_tools=include_tools,
+        include_models=include_models,
+        selected_tools=selected_tools,
+        selected_models=selected_models,
+        dry_run=dry_run,
+        yes=yes,
+        noninteractive=(
+            env_bool(values, "ALL2TEXT_SETUP_NONINTERACTIVE", False)
+            or env_bool(values, "ALL2TEXT_SETUP_NO_PROMPT", False)
+        ),
+        skip_root=env_bool(values, "ALL2TEXT_SETUP_SKIP_ROOT", False),
+        skip_heavy=env_bool(values, "ALL2TEXT_SETUP_SKIP_HEAVY", default_skip_heavy),
+        skip_models=not include_models,
+        strict=env_bool(values, "ALL2TEXT_SETUP_STRICT", False),
+        source=source,
+        target=values.get("ALL2TEXT_SETUP_TARGET", ""),
+        tools_dir=values.get("ALL2TEXT_TOOLS_DIR", "") or values.get("ALL2TEXT_SETUP_TOOLS_DIR", ""),
+        models_dir=values.get("ALL2TEXT_MODELS_DIR", "") or values.get("ALL2TEXT_SETUP_MODELS_DIR", ""),
+        report_path=values.get("ALL2TEXT_SETUP_REPORT", ""),
+    )
+
+
+def normalize_setup_mode(value: str | None, *, default: str) -> str:
+    normalized = str(value or default).strip().lower().replace("_", "-")
+    aliases = {
+        "": default,
+        "0": "skip",
+        "off": "skip",
+        "none": "skip",
+        "no": "skip",
+        "false": "skip",
+        "1": "minimal",
+        "yes": "minimal",
+        "all": "full",
+        "dry-run": "plan",
+        "dryrun": "plan",
+    }
+    normalized = aliases.get(normalized, normalized).replace("-", "_")
+    return normalized if normalized in SETUP_MODES else default
+
+
+def env_bool(env: dict[str, str], key: str, default: bool) -> bool:
+    value = env.get(key)
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in TRUE_VALUES:
+        return True
+    if normalized in FALSE_VALUES:
+        return False
+    return default
+
+
+def split_env_selectors(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return ()
+    return tuple(part for part in value.replace(",", " ").split() if part)
 
 
 def setup_paths(options: SetupOptions, config: All2TextConfig | None = None) -> dict[str, str]:
@@ -123,10 +224,11 @@ def build_setup_plan(
     paths = setup_paths(opts, cfg)
     system = (opts.system or platform.system()).lower()
     machine = platform.machine()
+    environment = environment_metadata(system, machine)
     tools_dir = Path(paths["tools_dir"])
     models_dir = Path(paths["models_dir"])
     tool_actions = build_tool_actions(cfg, opts, system, machine, tools_dir)
-    model_actions = build_model_actions(opts, system, machine, models_dir, tools_dir)
+    model_actions = build_model_actions(opts, system, machine, models_dir, tools_dir, environment)
     if opts.skip_models:
         model_actions = []
     actions = []
@@ -143,16 +245,91 @@ def build_setup_plan(
             "python": sys.version.split()[0],
             "python_executable": sys.executable,
         },
+        "environment": environment,
         "profile": opts.profile,
+        "mode": opts.mode,
         "paths": paths,
         "actions": [action.to_dict() for action in selected],
         "summary": setup_summary(selected),
-        "last_report": load_last_setup_report(paths["report_path"]),
+        "last_report": summarize_last_setup_report(load_last_setup_report(paths["report_path"])),
         "notes": [
-            "Normal pip/wheel installs must not run interactive postinstall installers.",
-            "Run all2text setup explicitly after package installation for external tools and models.",
+            "Source/legacy pip installs invoke the all2text setup hook when the build backend runs.",
+            "Wheel installs cannot run arbitrary postinstall code; all2text setup remains the rerunnable manual path.",
+            "Noninteractive installs never prompt. Use ALL2TEXT_SETUP_ASSUME_YES=1 or all2text setup --yes for automation.",
         ],
     }
+
+
+def environment_metadata(system: str, machine: str) -> dict[str, Any]:
+    package_managers = [
+        name for name in ("apt-get", "dnf", "yum", "pacman", "zypper", "brew", "winget", "choco", "scoop")
+        if shutil.which(name)
+    ]
+    build_tools = {
+        name: bool(shutil.which(name))
+        for name in ("git", "cmake", "make", "gcc", "g++", "clang", "cl", "ninja")
+    }
+    python_candidates = []
+    for name in ("python3.12", "python3.11", "python3.10", "python3.9", "python"):
+        executable = shutil.which(name)
+        if executable:
+            python_candidates.append({"executable": executable, "version": python_version(executable)})
+    return {
+        "normalized_system": system,
+        "architecture": normalize_architecture(machine),
+        "machine": machine,
+        "is_jetson": is_jetson(),
+        "nvidia": {
+            "nvidia_smi": bool(shutil.which("nvidia-smi")),
+            "nvcc": bool(shutil.which("nvcc")),
+            "cuda_root": str(Path("/usr/local/cuda")) if Path("/usr/local/cuda").exists() else "",
+        },
+        "package_managers": package_managers,
+        "build_tools": build_tools,
+        "python_candidates": python_candidates,
+        "external_env_managers": [
+            name for name in ("conda", "mamba", "micromamba", "pipx") if shutil.which(name)
+        ],
+    }
+
+
+def normalize_architecture(machine: str) -> str:
+    value = machine.lower()
+    if value in {"x86_64", "amd64"}:
+        return "x86_64"
+    if value in {"aarch64", "arm64"}:
+        return "aarch64"
+    if value.startswith("arm"):
+        return "arm"
+    return value or "unknown"
+
+
+def is_jetson() -> bool:
+    if Path("/etc/nv_tegra_release").exists():
+        return True
+    for path in (Path("/proc/device-tree/model"), Path("/proc/device-tree/compatible")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore").lower()
+        except Exception:
+            continue
+        if "jetson" in text or "tegra" in text:
+            return True
+    return False
+
+
+def python_version(executable: str) -> str:
+    try:
+        completed = subprocess.run(
+            [executable, "--version"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=2,
+            check=False,
+        )
+    except Exception:
+        return "unknown"
+    return (completed.stdout or completed.stderr).strip().replace("Python ", "")
 
 
 def setup_summary(actions: list[SetupAction]) -> dict[str, Any]:
@@ -229,7 +406,6 @@ def package_tool_action(
             reason="found on PATH",
             installer="system_package",
         )
-    command = system_install_command(system, package)
     return SetupAction(
         id=action_id,
         category="tool",
@@ -238,24 +414,50 @@ def package_tool_action(
         reason=f"{executable} not found on PATH",
         installer="system_package",
         safe_to_run=False,
-        user_commands=[command] if command else [],
+        user_commands=system_install_commands(system, package),
         blockers=["Requires OS package manager/root or user installation outside all2text."],
+        approx_size=package_size_note(package),
+        time_note="usually a few minutes with the OS package manager",
+        confirmation="manual_root",
     )
 
 
 def system_install_command(system: str, package: str) -> str:
+    commands = system_install_commands(system, package)
+    return commands[0] if commands else ""
+
+
+def system_install_commands(system: str, package: str) -> list[str]:
     if system.startswith("linux"):
-        return f"sudo apt-get update && sudo apt-get install -y {package}"
+        return [f"sudo apt-get update && sudo apt-get install -y {package}"]
     if system.startswith("darwin"):
-        return f"brew install {package}"
+        return [f"brew install {package}"]
     if system.startswith("windows"):
         winget_ids = {
             "ffmpeg": "Gyan.FFmpeg",
             "tesseract-ocr": "UB-Mannheim.TesseractOCR",
             "libreoffice": "TheDocumentFoundation.LibreOffice",
+            "radare2": "radareorg.radare2",
         }
-        return f"winget install {winget_ids.get(package, package)}"
-    return ""
+        choco_ids = {
+            "ffmpeg": "ffmpeg",
+            "tesseract-ocr": "tesseract",
+            "libreoffice": "libreoffice-fresh",
+            "radare2": "radare2",
+        }
+        return [
+            f"winget install {winget_ids.get(package, package)}",
+            f"choco install {choco_ids.get(package, package)}",
+        ]
+    return []
+
+
+def package_size_note(package: str) -> str:
+    if package == "libreoffice":
+        return "large desktop suite"
+    if package in {"ffmpeg", "tesseract-ocr"}:
+        return "tens to hundreds of MB depending on OS packages"
+    return "small to moderate OS package"
 
 
 def whisper_cpp_action(system: str, machine: str, tools_dir: Path) -> SetupAction:
@@ -293,6 +495,9 @@ def whisper_cpp_action(system: str, machine: str, tools_dir: Path) -> SetupActio
         installer="user_source_build",
         safe_to_run=not blockers,
         blockers=blockers,
+        approx_size="small source checkout plus build artifacts",
+        time_note="may take a few minutes on small ARM machines",
+        confirmation="safe_user_space",
         commands=[
             [
                 "git",
@@ -353,6 +558,9 @@ def llama_cpp_action(system: str, machine: str, tools_dir: Path) -> SetupAction:
         safe_to_run=not blockers,
         heavy=True,
         blockers=blockers,
+        approx_size="source checkout plus C++ build artifacts",
+        time_note="can take a long time on CPU-only ARM systems",
+        confirmation="heavy_user_space",
         commands=[
             ["git", "clone", "--depth", "1", "https://github.com/ggml-org/llama.cpp.git", str(tools_dir / "llama.cpp")],
             [
@@ -385,7 +593,6 @@ def radare2_action(system: str, machine: str, tools_dir: Path) -> SetupAction:
             reason="radare2/rabin2 found",
             installer="system_package",
         )
-    command = system_install_command(system, "radare2")
     return SetupAction(
         id="radare2",
         category="tool",
@@ -393,17 +600,25 @@ def radare2_action(system: str, machine: str, tools_dir: Path) -> SetupAction:
         status="blocked",
         reason="radare2/rabin2 not found",
         installer="system_package",
-        user_commands=[command] if command else [],
+        user_commands=system_install_commands(system, "radare2"),
         blockers=[
             "radare2 source builds are not run automatically because they are long and system-sensitive.",
             "Install with the OS package manager or provide tools.radare2.path in config.",
         ],
+        approx_size="moderate OS package or long source build",
+        time_note="package install is usually minutes; source build can take much longer",
+        confirmation="manual_root_or_explicit_source",
         metadata={"machine": machine, "suggested_user_dir": str(tools_dir / "radare2")},
     )
 
 
 def capa_action(system: str, machine: str, tools_dir: Path) -> SetupAction:
-    detected = shutil.which("capa")
+    env_dir = tools_dir / "capa-venv"
+    detected = find_executable(
+        "capa",
+        env_dir / "bin" / "capa",
+        env_dir / "Scripts" / "capa.exe",
+    )
     if detected:
         return SetupAction(
             id="capa",
@@ -415,29 +630,35 @@ def capa_action(system: str, machine: str, tools_dir: Path) -> SetupAction:
             installer="python_venv",
         )
     blockers = []
-    if sys.version_info < (3, 9):
-        blockers.append("current Python is < 3.9; recent flare-capa releases require newer Python")
-    if not shutil.which("pipx") and sys.version_info < (3, 9):
-        blockers.append("pipx with a Python 3.9+ interpreter is not available")
+    environment = environment_metadata(system, machine)
+    python = sys.executable if sys.version_info >= (3, 9) else select_external_python(environment)
+    if not python:
+        blockers.append("current Python is < 3.9 and no Python 3.10/3.11 interpreter was detected")
+    venv_python = external_venv_python(env_dir, system)
     return SetupAction(
         id="capa",
         category="tool",
         name="capa",
         status="blocked" if blockers else "installable",
         reason="capa executable not found",
-        target_path=str(tools_dir / "capa-venv"),
+        target_path=str(env_dir),
         installer="python_venv",
         safe_to_run=not blockers,
         blockers=blockers,
+        approx_size="Python virtualenv with flare-capa dependencies",
+        time_note="may take a few minutes when compatible wheels are available",
+        confirmation="safe_user_space",
         commands=[
-            [sys.executable, "-m", "venv", str(tools_dir / "capa-venv")],
-            [str(tools_dir / "capa-venv" / "bin" / "python"), "-m", "pip", "install", "--upgrade", "pip"],
-            [str(tools_dir / "capa-venv" / "bin" / "python"), "-m", "pip", "install", "flare-capa"],
+            [python or "python3.11", "-m", "venv", str(env_dir)],
+            [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],
+            [str(venv_python), "-m", "pip", "install", "flare-capa"],
         ],
         user_commands=[
-            "python3.10 -m pip install --user pipx && python3.10 -m pipx install flare-capa",
+            " ".join([python or "python3.11", "-m", "venv", str(env_dir)]),
+            f"{venv_python} -m pip install --upgrade pip",
+            f"{venv_python} -m pip install flare-capa",
         ],
-        metadata={"machine": machine},
+        metadata={"machine": machine, "python": python, "python_candidates": environment.get("python_candidates")},
     )
 
 
@@ -447,8 +668,10 @@ def build_model_actions(
     machine: str,
     models_dir: Path,
     tools_dir: Path,
+    environment: dict[str, Any] | None = None,
 ) -> list[SetupAction]:
     selectors = normalize_model_selectors(options.selected_models, options.profile)
+    env = environment or environment_metadata(system, machine)
     actions = [
         faster_whisper_action("faster_whisper_tiny", "Systran/faster-whisper-tiny", models_dir, heavy=False),
         faster_whisper_action("faster_whisper_base", "Systran/faster-whisper-base", models_dir, heavy=True),
@@ -471,7 +694,7 @@ def build_model_actions(
             "deplot",
             "DePlot chart model",
             find_paths(
-                ("/data/models/all2text", "/data/models/rag_tests/vision", "/data/models"),
+                ("/data/models/all2text", "/data/models"),
                 ("*deplot*", "*DePlot*"),
             ),
             "Chart model detected; execution adapter remains contract-only until enabled.",
@@ -480,7 +703,7 @@ def build_model_actions(
             "unichart",
             "UniChart chart model",
             find_paths(
-                ("/data/models/all2text", "/data/models/rag_tests/vision", "/data/models"),
+                ("/data/models/all2text", "/data/models"),
                 ("*unichart*", "*UniChart*"),
             ),
             "Chart model detected; execution adapter remains contract-only until enabled.",
@@ -490,21 +713,41 @@ def build_model_actions(
             "paddleocr_vl",
             "PaddleOCR-VL",
             "Python 3.10/3.11 environment or container recommended",
+            tools_dir,
+            models_dir,
+            env,
+            packages=("paddleocr", "paddlepaddle"),
+            huge=True,
         ),
         external_env_model_blocker(
             "glm_ocr",
             "GLM-OCR",
             "External service or Python 3.10/3.11 transformers environment recommended",
+            tools_dir,
+            models_dir,
+            env,
+            packages=("transformers", "accelerate", "sentencepiece"),
+            huge=True,
         ),
         external_env_model_blocker(
             "olmocr",
             "olmOCR",
             "Separate Python 3.10/3.11 environment or service provider recommended",
+            tools_dir,
+            models_dir,
+            env,
+            packages=("olmocr",),
+            huge=True,
         ),
         external_env_model_blocker(
             "docling",
             "Docling",
             "Separate Python 3.10/3.11 environment may be required on Jetson",
+            tools_dir,
+            models_dir,
+            env,
+            packages=("docling",),
+            huge=False,
         ),
     ]
     for action in actions:
@@ -552,6 +795,9 @@ def faster_whisper_action(action_id: str, repo_id: str, models_dir: Path, *, hea
         blockers=blockers,
         commands=[[sys.executable, "-m", "pip", "install", "huggingface_hub"]],
         notes=["Only tiny is considered a bounded default download; base/small require explicit selection."],
+        approx_size=whisper_model_size_note(repo_id),
+        time_note="may take a few minutes for tiny; larger variants can take longer",
+        confirmation="bounded_default" if not heavy else "explicit_or_full",
         metadata={"repo_id": repo_id},
     )
 
@@ -596,6 +842,9 @@ def whisper_cpp_model_action(
         blockers=blockers,
         commands=[["bash", str(script), model_name, str(models_dir / "whisper.cpp")]],
         notes=["Tiny is the bounded default; base requires explicit selection."],
+        approx_size=whisper_cpp_size_note(model_name),
+        time_note="may take a few minutes for tiny; base is larger",
+        confirmation="bounded_default" if not heavy else "explicit_or_full",
         metadata={"model_name": model_name, "script": str(script)},
     )
 
@@ -611,6 +860,9 @@ def detected_model_action(action_id: str, name: str, matches: list[str], note: s
             reason="local model files found",
             installer="external",
             notes=[note],
+            approx_size="existing local files only",
+            time_note="no download by setup",
+            confirmation="detected_only",
             metadata={"matches": matches[:20]},
         )
     return SetupAction(
@@ -625,6 +877,9 @@ def detected_model_action(action_id: str, name: str, matches: list[str], note: s
             "or configure a provider path."
         ],
         notes=[note],
+        approx_size="large or gated model files",
+        time_note="can take a long time or hours depending on model size",
+        confirmation="explicit_large_model",
     )
 
 
@@ -639,26 +894,140 @@ def heavy_model_blocker(action_id: str, name: str, models_dir: Path) -> SetupAct
         installer="manual_or_huggingface",
         heavy=True,
         blockers=["Explicit model license/size confirmation required."],
+        approx_size="large model weights",
+        time_note="can take a long time or hours",
+        confirmation="explicit_large_model",
     )
 
 
-def external_env_model_blocker(action_id: str, name: str, reason: str) -> SetupAction:
+def whisper_model_size_note(repo_id: str) -> str:
+    lowered = repo_id.lower()
+    if "tiny" in lowered:
+        return "about 75 MB"
+    if "base" in lowered:
+        return "about 150 MB"
+    if "small" in lowered:
+        return "about 500 MB"
+    return "model-size dependent"
+
+
+def whisper_cpp_size_note(model_name: str) -> str:
+    if model_name == "tiny":
+        return "about 75 MB"
+    if model_name == "base":
+        return "about 150 MB"
+    return "model-size dependent"
+
+
+def external_env_model_blocker(
+    action_id: str,
+    name: str,
+    reason: str,
+    tools_dir: Path,
+    models_dir: Path,
+    environment: dict[str, Any],
+    *,
+    packages: tuple[str, ...],
+    huge: bool,
+) -> SetupAction:
+    current_available = python_module_available(packages[0])
+    model_matches = find_paths(
+        (str(models_dir), "/data/models/all2text", "/data/models"),
+        (f"*{action_id}*", f"*{name.replace('-', '*')}*"),
+    )
+    if current_available and (not huge or model_matches):
+        return SetupAction(
+            id=action_id,
+            category="model",
+            name=name,
+            status="satisfied",
+            detected_path=model_matches[0] if model_matches else sys.executable,
+            reason="provider package/model evidence found",
+            installer="external_env_or_service",
+            approx_size="existing local package/model evidence",
+            time_note="no setup action needed",
+            confirmation="detected_only",
+            metadata={"packages": packages, "model_matches": model_matches[:20]},
+        )
+    python = select_external_python(environment)
+    env_dir = tools_dir / f"{action_id}-env"
+    normalized_system = str(environment.get("normalized_system") or platform.system()).lower()
+    venv_python = external_venv_python(env_dir, normalized_system)
+    commands: list[list[str]] = []
+    blockers = [
+        "Keep this stack isolated from the main all2text runtime to avoid replacing Jetson/NVIDIA packages.",
+    ]
+    if python:
+        commands = [
+            [python, "-m", "venv", str(env_dir)],
+            [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],
+            [str(venv_python), "-m", "pip", "install", *packages],
+        ]
+        user_commands = [" ".join(command) for command in commands]
+        status = "installable"
+        safe_to_run = not huge
+        if huge:
+            blockers.append("Large model/runtime stack requires explicit full/yes setup or service deployment.")
+    else:
+        user_commands = [
+            f"python3.11 -m venv {env_dir}",
+            f"{external_venv_python(env_dir, normalized_system)} -m pip install --upgrade pip",
+            f"{external_venv_python(env_dir, normalized_system)} -m pip install {' '.join(packages)}",
+        ]
+        status = "blocked"
+        safe_to_run = False
+        blockers.append("No Python 3.10/3.11 interpreter or external environment manager was detected.")
+    large_env = huge or action_id == "docling"
     return SetupAction(
         id=action_id,
         category="model",
         name=name,
-        status="blocked",
+        status=status,
         reason=reason,
         installer="external_env_or_service",
-        blockers=[
-            "Current all2text runtime is Python 3.8; this stack is best isolated in "
-            "Python 3.10/3.11, a container, or an external service.",
-        ],
-        user_commands=[
-            f"python3.10 -m venv /data/opt/all2text-tools/{action_id}-env",
-            f"/data/opt/all2text-tools/{action_id}-env/bin/python -m pip install --upgrade pip",
-        ],
+        target_path=str(env_dir),
+        commands=commands,
+        user_commands=user_commands,
+        blockers=blockers,
+        safe_to_run=safe_to_run,
+        heavy=True,
+        approx_size="large model/service stack" if large_env else "Python environment plus provider dependencies",
+        time_note="can take a long time or hours" if large_env else "may take a few minutes",
+        confirmation="explicit_large_model_or_service" if huge else "external_python_env",
+        metadata={
+            "packages": packages,
+            "python": python,
+            "models_dir": str(models_dir),
+            "model_matches": model_matches[:20],
+        },
     )
+
+
+def select_external_python(environment: dict[str, Any]) -> str:
+    for candidate in environment.get("python_candidates") or []:
+        executable = str(candidate.get("executable") or "")
+        version = str(candidate.get("version") or "")
+        if executable and version_tuple(version) >= (3, 10):
+            return executable
+    return ""
+
+
+def version_tuple(version: str) -> tuple[int, int]:
+    parts = []
+    for piece in version.split(".")[:2]:
+        try:
+            parts.append(int(piece))
+        except ValueError:
+            parts.append(0)
+    while len(parts) < 2:
+        parts.append(0)
+    return (parts[0], parts[1])
+
+
+def external_venv_python(env_dir: Path, system: str | None = None) -> Path:
+    if (system or platform.system()).lower().startswith("windows"):
+        return env_dir / "Scripts" / "python.exe"
+    return env_dir / "bin" / "python"
 
 
 def execute_setup(
@@ -678,26 +1047,36 @@ def execute_setup(
         if action.selected and action.status == "installable" and action.safe_to_run
     ]
     if opts.dry_run:
-        return setup_report(plan, [], "dry_run", opts)
+        return finalize_setup_report(setup_report(plan, [], "dry_run", opts), plan)
     if selected_installable and not opts.yes:
-        if is_interactive(input_stream, output_stream):
-            print(render_setup_text(plan), file=output_stream)
-            print("Proceed with safe installable actions? [y/N] ", end="", file=output_stream, flush=True)
+        if not opts.noninteractive and is_interactive(input_stream, output_stream):
+            print(render_setup_prompt(plan, selected_installable), end="", file=output_stream, flush=True)
             answer = input_stream.readline().strip().lower()
             if answer not in TRUE_VALUES:
-                return setup_report(plan, [], "cancelled", opts)
+                return finalize_setup_report(setup_report(plan, [], "cancelled", opts), plan)
         else:
-            return setup_report(
+            return finalize_setup_report(
+                setup_report(
+                    plan,
+                    [],
+                    "not_run_noninteractive",
+                    opts,
+                    note=(
+                        "Noninteractive setup does not install without --yes or "
+                        "ALL2TEXT_SETUP_ASSUME_YES=1."
+                    ),
+                ),
                 plan,
-                [],
-                "not_run_noninteractive",
-                opts,
-                note="Noninteractive setup does not install without --yes.",
             )
     results = []
     for action in selected_installable:
         results.append(run_action(action, opts))
-    report = setup_report(plan, results, "completed", opts)
+    status = "failed" if any(result.get("status") == "failed" for result in results) else "completed"
+    report = setup_report(plan, results, status, opts)
+    return finalize_setup_report(report, plan)
+
+
+def finalize_setup_report(report: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
     write_setup_report(report, plan["paths"]["report_path"])
     return report
 
@@ -713,6 +1092,8 @@ def run_action(action: SetupAction, options: SetupOptions) -> dict[str, Any]:
         if action.id.startswith("whisper_cpp_"):
             return install_whisper_cpp_model(action)
         if action.id == "capa":
+            return run_commands(action)
+        if action.installer == "external_env_or_service" and action.commands:
             return run_commands(action)
         return {"id": action.id, "status": "skipped", "reason": "no safe installer implemented"}
     except Exception as exc:
@@ -813,25 +1194,51 @@ def download_whisper_cpp_model(action: SetupAction, target: Path) -> dict[str, A
 
 def run_commands(action: SetupAction) -> dict[str, Any]:
     outputs = []
+    timeout = action_command_timeout(action)
     for command in action.commands:
-        result = run_command(command)
+        result = run_command(command, timeout=timeout)
         outputs.append({"command": command, **result})
         if result["returncode"] != 0:
             return {"id": action.id, "status": "failed", "outputs": outputs}
     return {"id": action.id, "status": "installed", "outputs": outputs}
 
 
+def action_command_timeout(action: SetupAction) -> int:
+    configured = os.environ.get("ALL2TEXT_SETUP_COMMAND_TIMEOUT_SECONDS", "").strip()
+    if configured:
+        try:
+            return max(60, int(configured))
+        except ValueError:
+            pass
+    if action.installer == "external_env_or_service" and (
+        action.heavy or "hours" in action.time_note.lower()
+    ):
+        return 14_400
+    return 1_800
+
+
 def run_command(command: list[str], *, cwd: Path | None = None, timeout: int = 1800) -> dict[str, Any]:
-    completed = subprocess.run(
-        [str(part) for part in command],
-        cwd=str(cwd) if cwd else None,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-    )
+    command_text = [str(part) for part in command]
+    try:
+        completed = subprocess.run(
+            command_text,
+            cwd=str(cwd) if cwd else None,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        return {
+            "command": command_text,
+            "returncode": -1,
+            "stdout": stdout[-4000:],
+            "stderr": (stderr + f"\nCommand timed out after {timeout} seconds.").strip()[-4000:],
+        }
     return {
-        "command": [str(part) for part in command],
+        "command": command_text,
         "returncode": completed.returncode,
         "stdout": completed.stdout[-4000:],
         "stderr": completed.stderr[-4000:],
@@ -875,6 +1282,32 @@ def load_last_setup_report(path: str | Path | None = None) -> dict[str, Any] | N
     return data if isinstance(data, dict) else None
 
 
+def summarize_last_setup_report(report: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not report:
+        return None
+    results = []
+    for result in report.get("results") or []:
+        if not isinstance(result, dict):
+            continue
+        compact = {
+            "id": result.get("id"),
+            "status": result.get("status"),
+        }
+        if result.get("error"):
+            compact["error"] = result.get("error")
+        if result.get("step"):
+            compact["step"] = result.get("step")
+        results.append(compact)
+    return {
+        "schema": report.get("schema"),
+        "status": report.get("status"),
+        "note": report.get("note"),
+        "plan_summary": report.get("plan_summary"),
+        "paths": report.get("paths"),
+        "results": results,
+    }
+
+
 def render_setup_text(plan_or_report: dict[str, Any]) -> str:
     plan = plan_or_report.get("plan") if "plan" in plan_or_report else plan_or_report
     lines = [
@@ -886,6 +1319,10 @@ def render_setup_text(plan_or_report: dict[str, Any]) -> str:
     ]
     for action in plan.get("actions", []):
         lines.append(f"- {action['id']}: {action['status']} - {action.get('reason') or ''}")
+        if action.get("approx_size") or action.get("time_note"):
+            size = action.get("approx_size") or "size unknown"
+            time = action.get("time_note") or "time varies"
+            lines.append(f"  size/time: {size}; {time}")
         if action.get("detected_path"):
             lines.append(f"  detected: {action['detected_path']}")
         for command in action.get("user_commands") or []:
@@ -893,6 +1330,49 @@ def render_setup_text(plan_or_report: dict[str, Any]) -> str:
         for blocker in action.get("blockers") or []:
             lines.append(f"  blocker: {blocker}")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def render_setup_prompt(plan: dict[str, Any], installable: list[SetupAction]) -> str:
+    lines = [
+        "all2text external setup can download/build missing tools and models now.",
+        f"Profile: {plan.get('profile', '')}; mode: {plan.get('mode', '')}",
+        f"Tools dir: {(plan.get('paths') or {}).get('tools_dir', '')}",
+        f"Models dir: {(plan.get('paths') or {}).get('models_dir', '')}",
+        "",
+        "Safe installable actions:",
+    ]
+    for action in installable:
+        size = action.approx_size or "size unknown"
+        time = action.time_note or "time varies"
+        lines.append(f"- {action.id} ({action.category}): {size}; {time}")
+    blocked = [
+        action for action in plan.get("actions", [])
+        if action.get("status") == "blocked" and action.get("selected", True)
+    ]
+    if blocked:
+        lines.extend(
+            [
+                "",
+                "Manual or blocked actions are recorded in the setup report and will not run automatically.",
+            ]
+        )
+    lines.extend(
+        [
+            "For automated installs set ALL2TEXT_SETUP_ASSUME_YES=1.",
+            "Download/build these missing all2text external tools/models now? [y/N] ",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def setup_command(profile: str = "full", *, yes: bool = False, minimal: bool = False) -> str:
+    profile_name = "minimal" if minimal else profile
+    command = f"{sys.executable} -m all2text setup --profile {profile_name}"
+    if yes:
+        command += " --yes"
+    else:
+        command += " --dry-run"
+    return command
 
 
 def setup_recommendation(config: All2TextConfig | None = None) -> dict[str, Any]:
@@ -912,7 +1392,7 @@ def setup_recommendation(config: All2TextConfig | None = None) -> dict[str, Any]
         "needed": bool(unavailable_enabled),
         "unavailable_enabled_providers": unavailable_enabled,
         "missing_or_installable": missing,
-        "command": f"{sys.executable} -m all2text setup --dry-run --profile full",
+        "command": setup_command("full"),
         "plan_summary": plan.get("summary", {}),
     }
 

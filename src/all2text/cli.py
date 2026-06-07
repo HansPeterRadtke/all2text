@@ -14,6 +14,7 @@ from all2text.external_setup import (
     execute_setup,
     is_interactive,
     render_setup_text,
+    setup_command,
     setup_recommendation,
 )
 from all2text.install_help import install_tools_guidance
@@ -61,13 +62,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def build_setup_parser() -> argparse.ArgumentParser:
+    setup_profiles = sorted(set(PROFILE_DEFAULTS) | {"minimal"})
     parser = argparse.ArgumentParser(
         prog="all2text setup",
         description="Detect, plan, and optionally install external all2text tools and models.",
     )
     parser.add_argument("--config", help="Path to an all2text TOML config file.")
-    parser.add_argument("--profile", choices=sorted(PROFILE_DEFAULTS), default="full")
+    parser.add_argument("--profile", choices=setup_profiles, default="full")
+    parser.add_argument("--mode", choices=("minimal", "full", "tools", "models", "plan"))
     parser.add_argument("--yes", action="store_true", help="Run safe selected installers without prompting.")
+    parser.add_argument("--assume-yes", action="store_true", help="Alias for --yes.")
+    parser.add_argument("--noninteractive", action="store_true", help="Do not prompt; report what would be needed.")
     parser.add_argument("--dry-run", action="store_true", help="Print the setup plan without installing.")
     parser.add_argument("--plan", action="store_true", help="Alias for --dry-run.")
     parser.add_argument("--json", action="store_true", help="Print JSON instead of a human-readable plan.")
@@ -105,29 +110,40 @@ def setup_main(argv: list[str]) -> int:
     parser = build_setup_parser()
     args = parser.parse_args(argv)
     config = load_config(args.config)
-    options = options_with_profile(config.options, args.profile)
+    profile_for_options = "auto" if args.profile == "minimal" else args.profile
+    options = options_with_profile(config.options, profile_for_options)
     config = config.with_options(options)
+    mode = args.mode or ("minimal" if args.profile == "minimal" else "full")
     tools_requested = args.tools is not None
     models_requested = args.models is not None
     include_tools = True
     include_models = True
+    if mode == "tools":
+        include_models = False
+    if mode == "models":
+        include_tools = False
     if tools_requested and not models_requested:
         include_models = False
     if models_requested and not tools_requested:
         include_tools = False
     if args.skip_models:
         include_models = False
+    selected_models = split_selectors(args.models) if models_requested else ()
+    if mode == "minimal" and include_models and not selected_models:
+        selected_models = ("minimal",)
     setup_options = SetupOptions(
-        profile=options.profile,
+        profile=args.profile,
+        mode=mode,
         include_tools=include_tools,
         include_models=include_models,
         selected_tools=split_selectors(args.tools) if tools_requested else (),
-        selected_models=split_selectors(args.models) if models_requested else (),
-        dry_run=args.dry_run or args.plan,
+        selected_models=selected_models,
+        dry_run=args.dry_run or args.plan or mode == "plan",
         json_output=args.json,
-        yes=args.yes,
+        yes=args.yes or args.assume_yes,
+        noninteractive=args.noninteractive,
         skip_root=args.skip_root,
-        skip_heavy=args.skip_heavy,
+        skip_heavy=args.skip_heavy or mode == "minimal",
         skip_models=args.skip_models,
         target=args.target or "",
         tools_dir=args.tools_dir or "",
@@ -161,7 +177,7 @@ def print_setup_prompt_if_needed(config: object) -> None:
     recommendation = setup_recommendation(config)
     if not recommendation.get("needed"):
         return
-    command = str(recommendation.get("command") or f"{sys.executable} -m all2text setup --dry-run --profile full")
+    command = str(recommendation.get("command") or setup_command("full"))
     provider_names = ", ".join(
         sorted(str(item.get("name")) for item in recommendation.get("unavailable_enabled_providers") or [])
     )

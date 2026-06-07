@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -446,7 +448,37 @@ def maybe_convert_with_docling(
     try:
         from docling.document_converter import DocumentConverter
     except Exception:
-        return None
+        external_python = docling_external_python(cfg)
+        if not external_python:
+            return None
+        try:
+            payload = convert_with_docling_subprocess(
+                external_python,
+                path,
+                timeout_seconds=int(provider.get("timeout_seconds", 120) or 120),
+            )
+        except Exception as exc:
+            fallback = document_fallback(
+                path,
+                classification,
+                ctx,
+                dependency_error=f"external docling conversion failed:{exc}",
+            )
+            fallback.warnings.append(f"external_docling_conversion_failed:{exc}")
+            fallback.metadata["docling"] = {
+                "attempted": True,
+                "used": False,
+                "external_python": str(external_python),
+            }
+            fallback.limitations.append("External Docling was configured but failed; safe document fallback output was used.")
+            return fallback
+        return docling_conversion_result(
+            rel_path,
+            classification,
+            str(payload["text"]),
+            str(payload["export_method"]),
+            external_python=str(external_python),
+        )
     try:
         converter = DocumentConverter()
         converted = converter.convert(str(path))
@@ -471,6 +503,23 @@ def maybe_convert_with_docling(
         fallback.metadata["docling"] = {"attempted": True, "used": False}
         fallback.limitations.append("Docling was configured but failed; safe document fallback output was used.")
         return fallback
+    return docling_conversion_result(rel_path, classification, text, export_method)
+
+
+def docling_conversion_result(
+    rel_path: Path,
+    classification: Classification,
+    text: str,
+    export_method: str,
+    *,
+    external_python: str | None = None,
+) -> ConversionResult:
+    metadata = {
+        "format": classification.concrete_format,
+        "docling": {"attempted": True, "used": True, "export_method": export_method},
+    }
+    if external_python:
+        metadata["docling"]["external_python"] = external_python
     return ConversionResult(
         text=(
             f"File: {rel_path.name}\n"
@@ -481,12 +530,66 @@ def maybe_convert_with_docling(
         ),
         converter_used="docling_document_backend",
         extraction_methods_used=["docling_document_conversion", f"docling_{export_method}"],
-        metadata={
-            "format": classification.concrete_format,
-            "docling": {"attempted": True, "used": True, "export_method": export_method},
-        },
+        metadata=metadata,
         limitations=["Docling output is accepted as provider evidence; embedded media/model behavior depends on the installed Docling stack."],
     )
+
+
+def docling_external_python(config: object) -> Path | None:
+    cfg = config_for_context(config)
+    provider = effective_provider(cfg, "document_intelligence")
+    configured = str(provider.get("python", "") or provider.get("executable", "") or "").strip()
+    if configured:
+        path = Path(configured).expanduser()
+        return path if path.exists() else None
+    try:
+        from all2text.external_setup import default_tools_dir
+    except Exception:
+        return None
+    tools_dir = Path(str(getattr(cfg.options, "setup_tools_dir", "") or "") or default_tools_dir()).expanduser()
+    for candidate in docling_env_python_candidates(tools_dir / "docling-env"):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def docling_env_python_candidates(env_dir: Path) -> tuple[Path, ...]:
+    return (
+        env_dir / "bin" / "python",
+        env_dir / "Scripts" / "python.exe",
+    )
+
+
+def convert_with_docling_subprocess(python: Path, path: Path, *, timeout_seconds: int) -> dict[str, str]:
+    script = r"""
+import json
+import sys
+from docling.document_converter import DocumentConverter
+
+converted = DocumentConverter().convert(sys.argv[1])
+document = getattr(converted, "document", converted)
+if hasattr(document, "export_to_markdown"):
+    text = str(document.export_to_markdown())
+    export_method = "export_to_markdown"
+elif hasattr(document, "export_to_text"):
+    text = str(document.export_to_text())
+    export_method = "export_to_text"
+else:
+    text = str(document)
+    export_method = "str_document"
+print(json.dumps({"text": text, "export_method": export_method}))
+"""
+    completed = subprocess.run(
+        [str(python), "-c", script, str(path)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=max(1, timeout_seconds),
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or completed.stdout or "docling subprocess failed")[-1000:])
+    return json.loads(completed.stdout)
 
 
 def convert_odf(

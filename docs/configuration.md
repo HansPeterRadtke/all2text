@@ -57,27 +57,55 @@ Config is mainly for overrides and controls. Explicit config wins over automatic
 
 ## External Setup
 
-Normal package installation remains:
+Normal package installation is the official user path:
 
 ```bash
 python -m pip install .
 ```
 
-External binaries, servers, and model weights are managed after installation because modern
-pip/wheel/PEP517 installs must not block for interactive prompts or mutate system state behind the
-installer. The supported flow is:
+When pip installs from source and invokes the setuptools build backend, all2text runs an external
+setup hook. If stdin/stdout are real terminals, the hook asks a simple yes/no question before
+downloading or building safe user-space tools and bounded default models. If the install is
+noninteractive, it never waits for input; it writes a setup report and prints the exact rerun command.
+An already-built wheel install cannot run arbitrary postinstall code, so the same setup planner is
+also exposed as a manual/developer rerun:
 
 ```bash
 python -m all2text setup --dry-run --profile full
-python -m all2text setup --yes --tools --models minimal
+python -m all2text setup --yes --profile minimal
 python -m all2text /path/to/source /path/to/output
 ```
 
-`all2text setup` generates a platform-aware plan for Linux, macOS, and Windows. It marks tools and
-models as `satisfied`, `installable`, or `blocked`, records exact apt/brew/winget/manual commands
-where root or platform setup is required, and writes its last report under a user state path by
-default. It supports noninteractive-safe flags: `--yes`, `--dry-run`, `--plan`, `--json`, `--tools`,
-`--models`, `--target`, `--skip-models`, `--skip-root`, `--skip-heavy`, and `--profile`.
+`all2text setup` generates a platform-aware plan for Linux, macOS, and Windows. It records OS,
+architecture, Jetson/NVIDIA signals, package managers, build tools, Python 3.10/3.11 candidates,
+reachable local model endpoints, and local model roots. It marks tools and models as `satisfied`,
+`installable`, or `blocked`, records exact apt/brew/winget/choco/manual commands where root or
+platform setup is required, and writes its last report under a user state path by default. It
+supports noninteractive-safe flags: `--yes`, `--assume-yes`, `--noninteractive`, `--dry-run`,
+`--plan`, `--json`, `--tools`, `--models`, `--target`, `--skip-models`, `--skip-root`,
+`--skip-heavy`, `--mode`, and `--profile`.
+
+Pip/developer automation variables:
+
+```bash
+ALL2TEXT_SETUP_ASSUME_YES=1
+ALL2TEXT_SETUP_MODE=minimal|full|tools|models|plan|skip
+ALL2TEXT_SETUP_NONINTERACTIVE=1
+ALL2TEXT_SETUP_SKIP_HEAVY=0|1
+ALL2TEXT_SETUP_SKIP_MODELS=1
+ALL2TEXT_SETUP_TOOLS=whisper_cpp,capa
+ALL2TEXT_SETUP_MODELS=faster_whisper_tiny,whisper_cpp_tiny
+ALL2TEXT_SETUP_TARGET=/data/opt/all2text
+ALL2TEXT_TOOLS_DIR=/data/opt/all2text-tools
+ALL2TEXT_MODELS_DIR=/data/models/all2text
+ALL2TEXT_SETUP_REPORT=/tmp/all2text-setup-report.json
+ALL2TEXT_SETUP_COMMAND_TIMEOUT_SECONDS=14400
+```
+
+`minimal` is the bounded default and selects useful small models such as tiny Whisper variants while
+skipping heavy builds/downloads. `full` plans the best feasible local stack for the machine and can
+run heavier safe actions only with `--yes` or `ALL2TEXT_SETUP_ASSUME_YES=1`; huge or gated model
+families still require explicit files, service setup, or external-env/container work.
 
 Setup storage can be configured without changing provider settings:
 
@@ -267,9 +295,10 @@ Current core provider behavior:
   binary metadata providers expose status and routing hooks. Heavy model-backed adapters remain
   contract-only unless explicitly implemented and configured.
 - Document intelligence: a Docling adapter is present, but it runs only when the `docling` Python
-  package imports successfully, the provider is configured as `docling`, and `auto_invoke=true`. On
-  the current Jetson Python, `python -m pip install docling` reports no matching distribution, so
-  doctor reports an explicit dependency blocker.
+  package imports successfully, the provider is configured as `docling`, and `auto_invoke=true`.
+  On Python 3.8 Jetson, setup creates an isolated Python 3.10/3.11 env when available and the
+  adapter can bridge through that env. That stack can be large, so setup records size/time notes and
+  uses a longer external-env timeout.
 - Video frame settings (`sample_frames`, `max_frames`, `interval_seconds`, `output_format`, `ocr`,
   `vlm`, and `preserve_frames`) are reflected in per-video stage plans. When `sample_frames=true`,
   `auto_invoke=true`, and ffmpeg is available, frames are actually sampled into a temporary runtime
@@ -356,10 +385,11 @@ binary wheels or small pure-Python wheels: `ebooklib`, `odfpy`, `mutagen`, `piex
 `xlrd`, `pyshp`, `pyproj`, `pefile`, `ezdxf`, `netCDF4`, `astropy`, `pyarrow`, `h5netcdf`, `h5py`,
 `filetype`, `python-magic`, `py7zr`, `macholib`, `lief`, and `faster-whisper`.
 
-Provider blockers observed on Jetson:
+Provider blockers and external-env notes observed on Jetson:
 
-- `docling`: no compatible distribution was available from the active package index for this
-  Python/runtime.
+- `docling`: the active Python 3.8 runtime is too old for current Docling wheels. Setup uses a
+  Python 3.10/3.11 venv under the external tools directory when available; the install can pull a
+  large Torch/document stack and may take a long time or hours on ARM.
 - `paddleocr`: package resolution is possible, but the dry-run plan adds a large pinned
   `opencv-contrib-python` stack alongside the existing OpenCV install and still does not install
   PaddleOCR-VL model files. Treat it as a deliberate external install, not a normal default.

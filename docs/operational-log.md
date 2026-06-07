@@ -453,3 +453,96 @@ Next best step:
 - Add real execution wiring for the now-installed whisper.cpp route, then continue with PDF rendering
   plus OCR fallback and frame OCR/VLM processing. For binary metadata, install radare2 through the OS
   package manager or provide an external path; for capa, use a Python 3.10/3.11 isolated environment.
+
+## 2026-06-07 - Pip-invoked external setup completion report
+
+Audio-style report:
+
+- Scope: repository edits were limited to `/data/src/github/all2text`. `/data/src/github/devtests/rag_tests`
+  was used only as read-only reference context. No devtests, KnowMoreDiRT, DRT, unrelated repositories,
+  model files, build products, caches, venvs, generated outputs, or runtime logs were committed.
+- Product result: normal source install is still the official user path, `python -m pip install .`.
+  A new setuptools-backed source-install hook now runs when pip invokes the build backend. Interactive
+  source installs can ask a simple yes/no external setup question; noninteractive installs never hang
+  and write a setup report instead. Built wheel installs still cannot run arbitrary postinstall code,
+  so `python -m all2text setup` remains the rerunnable manual/developer path.
+- Mechanisms implemented: `setup.py` hooks for `install`, `develop`, and `bdist_wheel`;
+  `all2text.install_hook`; environment-driven setup options; setup modes
+  `minimal`, `full`, `tools`, `models`, `plan`, and `skip`; yes-to-all via
+  `ALL2TEXT_SETUP_ASSUME_YES=1`; noninteractive controls; persistent setup reports; compact last
+  report summaries; large-action timeout handling; size/time prompt text; and platform/architecture
+  metadata for Linux, Windows, macOS, aarch64/ARM, x86_64, Jetson/NVIDIA, package managers, build
+  tools, and Python 3.10/3.11 candidates.
+- Provider bridge result: Docling can now be detected from a setup-managed external Python env and
+  PDF conversion can call that external Python through a JSON subprocess bridge when the main runtime
+  cannot import Docling. The detector handles both Unix `bin/python` and Windows
+  `Scripts/python.exe` venv layouts.
+
+Jetson setup results:
+
+- Current Jetson environment detected as Linux/aarch64, Jetson true, CUDA root `/usr/local/cuda`,
+  `apt-get`, build tools present, active Python `3.8.10`, and external Python candidate
+  `/home/hans/.local/bin/python3.11` version `3.11.15`.
+- Full setup dry-run after the Docling attempt: `satisfied=15`, `blocked=2`, `installable=7`.
+  Remaining missing/installable ids were `radare2`, `faster_whisper_base`, `faster_whisper_small`,
+  `whisper_cpp_base`, `chartgemma`, `paddleocr_vl`, `glm_ocr`, `olmocr`, and `docling`.
+- Minimal setup dry-run after the Docling attempt: `satisfied=14`, `blocked=1`, with only `radare2`
+  still missing for the minimal profile. Minimal yes setup completed with no actions to run.
+- Source pip hook verification: noninteractive source install wrote status `not_run_noninteractive`
+  with no results; assume-yes source install wrote status `completed` with `whisper_cpp` already
+  satisfied. The first concurrent pip simulation collided on the same temp venv console script during
+  uninstall; rerunning the noninteractive case by itself passed.
+- Real Docling attempt: `python -m all2text setup --yes --models docling` created
+  `/data/opt/all2text-tools/docling-env` with Python 3.11, then ran
+  `/data/opt/all2text-tools/docling-env/bin/python -m pip install docling`. It timed out after
+  14,400 seconds. At timeout, pip had pulled a large PyTorch/CUDA 13 stack into `/data/tmp`, including
+  Torch 2.12.0 aarch64, CUDNN, cusparselt, NCCL, nvshmem, and a partial Triton wheel. The isolated env
+  remained about 25 MB; the pip temp area was about 2.1 GB. This is a real Jetson/aarch64 blocker for
+  the unrestricted PyPI Docling route, not a repository failure.
+- Workaround route implemented: Docling is planned and bridged through an isolated external env, but
+  the next safe route should constrain the stack to a CPU-only wheel set, a container, or a service
+  deployment instead of rerunning the same unrestricted CUDA dependency path.
+
+Verification:
+
+- `PYTHONPYCACHEPREFIX=/tmp/all2text-pycache-final7 python -m compileall -q src tests setup.py` passed.
+- Focused setup tests passed: `tests/test_external_setup.py` reported 28 passing checks.
+- Full pytest passed after final edits: 59 passing checks.
+- `python -m all2text setup --dry-run --profile full --json` passed with the counts above.
+- `python -m all2text setup --dry-run --profile minimal --json` passed with the counts above.
+- `python -m all2text setup --yes --profile minimal --json` completed with no runnable actions.
+- `python -m all2text doctor` returned successfully and included setup counts `satisfied=15`,
+  `blocked=9`, with no safe installable actions under the doctor skip-heavy plan.
+- Smoke conversion with `--profile core` converted `/data/tmp/all2text-smoke-src-final/note.txt` to
+  `/data/tmp/all2text-smoke-out-final/note.txt.txt` and preserved the expected text.
+- `git diff --check` passed.
+
+Hardcoding and API scan:
+
+- Production-code scan found no benchmark/question/fixture-specific branches, hidden-answer use,
+  expected-answer literals, current-failure entity branches, or owner/reviewer/customer/ticket/runbook
+  domain handlers.
+- The only production `owner` hit remains the pre-existing filesystem metadata helper `owner_name`.
+  Other hits were documentation lineage notes, test variable names, yes/no setup prompt wording, or
+  config error text such as `expected one of`.
+- Public all2text API and normal CLI usage remain compatible. No benchmark-specific API or handler
+  was added.
+
+Score and benchmark status:
+
+- No internal all2text benchmark, DRT benchmark, or failed-only benchmark slice was run in this
+  session. Official full score, verified targeted/implied score, filtered benchmark results, and
+  fixed/still-failing benchmark counts are not applicable to this all2text setup task.
+- Validation signal for this checkpoint is source-install hook behavior, setup reports, Jetson setup
+  dry-runs, bounded real setup attempts, doctor, smoke conversion, compileall, focused tests, full
+  pytest, and hardcoding scan.
+
+Remaining blockers and next step:
+
+- Docling: unrestricted PyPI install on Jetson/aarch64 timed out while downloading a large Torch/CUDA
+  13 dependency stack. Next step is a constrained CPU-only/container/service route.
+- `radare2`: still requires OS package install or configured external path.
+- `paddleocr_vl`, `glm_ocr`, `olmocr`, and `chartgemma`: still require explicit large model/service
+  setup or external files; they are planned, not silently downloaded.
+- Commit/push: this entry is included in the final checkpoint commit; final commit hash is recorded in
+  git history and reported in the session final response.

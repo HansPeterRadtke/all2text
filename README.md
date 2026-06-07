@@ -37,16 +37,10 @@ output: out/reports/final.pdf.txt
 
 ## Install
 
-Lowest-detail/base install:
+Repository install:
 
 ```bash
 cd /data/src/github/all2text
-python -m pip install .
-```
-
-Full PyPI install from source:
-
-```bash
 python -m pip install .
 ```
 
@@ -56,23 +50,41 @@ Future package install:
 python -m pip install all2text
 ```
 
-The normal install includes the safe PyPI dependency set. It does not install external binaries,
-model files, llama.cpp servers, Tesseract itself, ffmpeg/ffprobe, LibreOffice, or system `file`.
-Modern pip/wheel/PEP517 installs must be noninteractive and automation-safe, so all2text does not
-fake a pip postinstall prompt. Use the supported setup helper after installation:
+The normal install includes the safe PyPI dependency set and, when pip is installing from source and
+the build backend is invoked, runs the all2text external setup hook. In an interactive terminal the
+hook offers a simple yes/no prompt for missing safe user-space tools and bounded default models. In
+noninteractive installs it never waits for input; it writes a setup report and prints the exact
+rerun command. Installing an already-built wheel cannot run arbitrary postinstall code, so the same
+setup path remains available as a manual/developer rerun:
 
 ```bash
 python -m all2text setup --dry-run --profile full
-python -m all2text setup --yes --tools --models minimal
+python -m all2text setup --yes --profile minimal
 python -m all2text SOURCE TARGET
 ```
 
-`all2text setup` detects installed tools/models, prints package-manager commands for root/system
-tools, builds safe user-space tools such as whisper.cpp when selected and build prerequisites exist,
-and downloads only explicitly selected bounded model assets. Useful setup flags include `--plan`,
-`--json`, `--tools`, `--models`, `--target`, `--skip-models`, `--skip-root`, `--skip-heavy`, and
-`--profile full`. Runtime reports are written under a user state directory by default, not into the
-repository.
+The pip hook and `all2text setup` share the same planner. They detect OS, architecture, Jetson/NVIDIA
+signals, package managers, build tools, Python 3.10/3.11 candidates, reachable local model endpoints,
+and local model roots. Root/system package work is reported as exact apt/brew/winget/choco commands;
+safe user-space builds such as whisper.cpp can run when selected and prerequisites exist. Bounded
+defaults such as tiny Whisper models list rough size/time notes. Huge or gated model stacks are listed
+explicitly and are not silently downloaded.
+
+Automation controls use environment variables that pip can pass through:
+
+```bash
+ALL2TEXT_SETUP_ASSUME_YES=1 python -m pip install .
+ALL2TEXT_SETUP_MODE=full ALL2TEXT_SETUP_ASSUME_YES=1 python -m pip install .
+ALL2TEXT_SETUP_NONINTERACTIVE=1 python -m pip install .
+ALL2TEXT_SETUP_MODE=skip python -m pip install .
+```
+
+Useful variables include `ALL2TEXT_SETUP_MODE=minimal|full|tools|models|plan|skip`,
+`ALL2TEXT_SETUP_ASSUME_YES=1`, `ALL2TEXT_SETUP_NONINTERACTIVE=1`,
+`ALL2TEXT_SETUP_SKIP_HEAVY=0|1`, `ALL2TEXT_SETUP_SKIP_MODELS=1`,
+`ALL2TEXT_SETUP_TOOLS`, `ALL2TEXT_SETUP_MODELS`, `ALL2TEXT_SETUP_TARGET`,
+`ALL2TEXT_TOOLS_DIR`, `ALL2TEXT_MODELS_DIR`, `ALL2TEXT_SETUP_REPORT`, and
+`ALL2TEXT_SETUP_COMMAND_TIMEOUT_SECONDS` for long external environment installs.
 
 At runtime all2text automatically uses installed Python packages from these extras, detects safe
 external tools on PATH/default configured locations, and safely probes configured/common local
@@ -81,15 +93,16 @@ conversion needs an enabled external provider and stdin/stdout are interactive, 
 to run the setup helper; in noninteractive mode it never waits for input and prints the exact setup
 command instead. The config loader uses Python 3.11+ `tomllib`, optional `tomli` on older Python, or
 a small fallback parser for the simple template shipped here.
-Optional groups enable native extraction paths when installed:
+Developer extras are optional:
 
 ```bash
-python -m pip install .
+python -m pip install '.[dev]'
 ```
 
-`textract` is available as a legacy extra, but it is not part of `all-pip` because practical
-operation often depends on external converter binaries and older Python dependency constraints.
-MarkItDown is included in the PyPI extras only on Python versions where the published package is resolvable; the native all2text document backends do not depend on it.
+`legacy-textract` is available as a deliberate extra, but practical operation often depends on
+external converter binaries and older Python dependency constraints. MarkItDown is installed only on
+Python versions where the published package is resolvable; the native all2text document backends do
+not depend on it.
 
 ## CLI
 
@@ -295,10 +308,12 @@ Detailed docs:
 - [Bootstrap report](docs/final-report.md)
 - [Open-source extraction research](docs/open-source-extraction-research-2026.md)
 
-Current Jetson blocker note: `python -m pip install docling` reported no matching distribution in the
-active Python environment, so the Docling adapter remains gated by dependency availability. It will
-run only when configured with `providers.document_intelligence.name="docling"` and
-`auto_invoke=true`.
+Current Jetson Docling note: the active Python 3.8 runtime is too old for current Docling wheels, so
+setup plans an isolated Python 3.10/3.11 environment under the external tools directory when a newer
+interpreter is available. That install can pull a large Torch/document stack and may take a long time
+or hours on ARM. The adapter runs only when configured with
+`providers.document_intelligence.name="docling"` and `auto_invoke=true`, using either the active
+Python package or the setup-managed external env.
 
 Scientific extras use Python-version markers so older supported Python runtimes receive compatible package versions where upstream wheels exist.
 
@@ -308,4 +323,4 @@ Document extras constrain lxml on older supported Python runtimes to avoid forci
 
 Some source-build-heavy PyPI packages are guarded by Python-version markers on older runtimes so the advertised install command does not require system compiler headers or native development libraries.
 
-A normal user does not need dependency extras. From a cloned repository, run `python -m pip install .`; after a future PyPI release, run `python -m pip install all2text`. External binaries and model files remain outside pip and are auto-detected when present. Use `all2text doctor` to inspect detection and `all2text install-tools` for OS-aware external-tool guidance.
+A normal user does not need dependency extras. From a cloned repository, run `python -m pip install .`; after a future PyPI release, run `python -m pip install all2text`. Source installs invoke the setup hook when pip runs the build backend; wheel installs cannot run arbitrary postinstall code, so `all2text setup` remains the manual rerun. Use `all2text doctor` to inspect detection and `all2text install-tools` for OS-aware external-tool guidance.

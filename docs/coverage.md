@@ -71,9 +71,10 @@ Python-library, CAD/scientific/geospatial/binary metadata, and video-frame route
 `provider_family_statuses`, a broader catalog of researched provider candidates and blockers. The
 manifest and doctor output also include `provider_execution_summary` to separate installed Python
 providers, external tools, reachable endpoints, discovered local model files, executable providers,
-contract-only providers, and blockers. `all2text doctor` also includes the external setup plan and
-last setup report when present, so missing ffmpeg/Tesseract/LibreOffice/whisper.cpp/llama.cpp/
-radare2/capa tools and local model roots can be audited before conversion. This
+contract-only providers, and blockers. `all2text doctor` also includes the pip-hook/manual external
+setup plan, environment metadata, and last setup report when present, so missing
+ffmpeg/Tesseract/LibreOffice/whisper.cpp/llama.cpp/radare2/capa tools and local model roots can be
+audited before conversion. This
 makes a run auditable even when no file happened to exercise a provider family. It also records
 module statuses so configured extraction routes that had no matching files, or were not selected for
 matching files, are explicit.

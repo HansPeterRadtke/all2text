@@ -2,30 +2,31 @@
 
 ## Installation
 
-Core install:
+Repository install:
 
 ```bash
 cd /data/src/github/all2text
-python -m pip install -e .
+python -m pip install .
 ```
 
 Development install:
 
 ```bash
-python -m pip install -e '.[all-pip,dev]'
+python -m pip install -e '.[dev]'
 ```
 
 Future package install:
 
 ```bash
-python -m pip install 'all2text[all-pip]'
+python -m pip install all2text
 ```
 
-`all-pip` installs normal Python/PyPI packages only. It does not install external binaries,
-llama.cpp servers, local models, Tesseract itself, ffmpeg/ffprobe, LibreOffice, or system `file`.
-Optional dependency groups enable native paths and future/external backends. Installed optional
-Python packages are used automatically. External binaries and local model endpoints are detected
-automatically when allowed and available; missing capabilities are reported and are not fatal.
+The normal pip command is the official user path. Source installs invoke the all2text setup hook when
+pip runs the build backend; interactive installs can ask a simple yes/no question for safe external
+setup, and noninteractive installs write a report without waiting. Wheel installs cannot run arbitrary
+postinstall code, so `python -m all2text setup` is the rerunnable/manual path. Installed optional
+Python packages, external binaries, and local model endpoints are detected automatically when allowed
+and available; missing capabilities are reported and are not fatal.
 
 ```bash
 python -m pip install .
@@ -165,7 +166,12 @@ Install and diagnostics commands:
 python -m pip install .
 python -m all2text SOURCE_FOLDER TARGET_FOLDER
 all2text doctor
+python -m all2text setup --dry-run --profile full
+python -m all2text setup --yes --profile minimal
 all2text install-tools
 ```
 
-The pip command installs the Python package and safe PyPI dependencies. External binaries and model files are detected at runtime or configured explicitly.
+The pip command installs the Python package and safe PyPI dependencies, and source installs can invoke
+the external setup hook. Use `ALL2TEXT_SETUP_ASSUME_YES=1` for unattended setup or
+`ALL2TEXT_SETUP_NONINTERACTIVE=1` to force no-prompt report-only behavior. Long external environment
+installs can be bounded with `ALL2TEXT_SETUP_COMMAND_TIMEOUT_SECONDS`.

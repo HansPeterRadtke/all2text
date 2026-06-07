@@ -4,6 +4,7 @@ import base64
 import importlib.util
 import json
 import os
+import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
@@ -178,6 +179,7 @@ def provider_statuses(config: object | None, *, family: str | None = None) -> li
                     effective_provider(cfg, "document_intelligence"),
                     configured=cfg.provider("document_intelligence"),
                     profile=cfg.options.profile,
+                    setup_tools_dir=cfg.options.setup_tools_dir,
                 ),
             ]
         )
@@ -732,22 +734,40 @@ def chart_status(provider: ProviderConfig, *, configured: ProviderConfig, profil
     )
 
 
-def document_intelligence_status(provider: ProviderConfig, *, configured: ProviderConfig, profile: str) -> ProviderStatus:
+def document_intelligence_status(
+    provider: ProviderConfig,
+    *,
+    configured: ProviderConfig,
+    profile: str,
+    setup_tools_dir: str = "",
+) -> ProviderStatus:
     enabled = provider.enabled and provider.name != "none"
     available = False
     source = str(provider.get("endpoint", "") or provider.get("model_path", "") or "") or None
+    external_python = (
+        docling_external_python(provider, setup_tools_dir=setup_tools_dir)
+        if provider.name == "docling"
+        else None
+    )
     if provider.get("disabled_by_profile"):
         error = f"document intelligence provider disabled by profile:{profile}"
     elif not enabled:
         error = "document intelligence provider disabled by config"
     elif provider.name == "docling":
-        if not python_module_available("docling"):
-            error = "Python package not installed for document intelligence provider: docling"
-        else:
+        if python_module_available("docling"):
             available = True
+            source = source or "python:docling"
             error = None
             if not bool(provider.get("auto_invoke", False)):
                 error = "Docling is installed but auto_invoke=false; not invoked"
+        elif external_python and external_python_module_available(external_python, "docling"):
+            available = True
+            source = str(external_python)
+            error = None
+            if not bool(provider.get("auto_invoke", False)):
+                error = "External Docling env is installed but auto_invoke=false; not invoked"
+        else:
+            error = "Python package not installed for document intelligence provider: docling"
     elif provider.name in {"paddleocr_vl", "glm_ocr", "olmocr"}:
         dependency_found = _provider_dependency_found(provider.name)
         if not dependency_found:
@@ -771,18 +791,58 @@ def document_intelligence_status(provider: ProviderConfig, *, configured: Provid
             "auto_invoke": bool(provider.get("auto_invoke", False)),
             "model_path": str(provider.get("model_path", "") or "") or None,
             "endpoint": str(provider.get("endpoint", "") or "") or None,
+            "external_python": str(external_python) if external_python else None,
         },
         lifecycle=provider_lifecycle(
             configured=configured.enabled or configured.name != "none",
             enabled=enabled,
             available=available,
             error=error,
-            dependency_found=_provider_dependency_found(provider.name),
+            dependency_found=_provider_dependency_found(provider.name)
+            or (provider.name == "docling" and available and bool(external_python)),
             auto_detected=bool(provider.get("endpoint", "") or provider.get("model_path", "")),
             skipped=available and not bool(provider.get("auto_invoke", False)),
         ),
         evidence=[f"provider:{provider.name}"],
     )
+
+
+def docling_external_python(provider: ProviderConfig, *, setup_tools_dir: str = "") -> Path | None:
+    configured = str(provider.get("python", "") or provider.get("executable", "") or "").strip()
+    if configured:
+        path = Path(configured).expanduser()
+        return path if path.exists() else None
+    try:
+        from all2text.external_setup import default_tools_dir
+    except Exception:
+        return None
+    tools_dir = Path(setup_tools_dir).expanduser() if setup_tools_dir else default_tools_dir()
+    for candidate in external_env_python_candidates(tools_dir / "docling-env"):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def external_env_python_candidates(env_dir: Path) -> tuple[Path, ...]:
+    return (
+        env_dir / "bin" / "python",
+        env_dir / "Scripts" / "python.exe",
+    )
+
+
+def external_python_module_available(python: Path, module: str) -> bool:
+    try:
+        completed = subprocess.run(
+            [str(python), "-c", f"import {module}"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return False
+    return completed.returncode == 0
 
 
 def speech_status(provider: ProviderConfig, *, configured: ProviderConfig, profile: str) -> ProviderStatus:

@@ -12,13 +12,12 @@ def install_tools_guidance(system: str | None = None) -> str:
     if name.startswith("linux"):
         body = """
         all2text itself is installed with: python -m pip install .
-        Then inspect external setup with:
+        Source installs can invoke the external setup hook. Inspect or rerun setup with:
           python -m all2text setup --dry-run --profile full
 
-        Modern pip/wheel installs must stay noninteractive, so external binaries and model
-        weights are managed by all2text setup after package installation. It can build/download
-        safe user-space components when requested with --yes, and reports exact blockers for
-        root/system packages. Common Debian/Ubuntu package commands:
+        Interactive source installs can ask a yes/no setup question. Noninteractive installs never
+        wait; use ALL2TEXT_SETUP_ASSUME_YES=1 for unattended setup. Built wheels cannot run arbitrary
+        postinstall code, so all2text setup remains the manual rerun. Common Debian/Ubuntu package commands:
           sudo apt-get update
           sudo apt-get install -y ffmpeg tesseract-ocr libmagic1 file acl libreoffice
 
@@ -32,17 +31,19 @@ def install_tools_guidance(system: str | None = None) -> str:
 
         Heavy document/VLM/ASR/diarization model weights are never downloaded by default. Put them
         under an external model root such as /data/models, or select a bounded setup model
-        explicitly. Avoid installing Jetson Torch/torchaudio replacements unless they match
-        NVIDIA's local PyTorch build.
+        explicitly. Large isolated provider environments can be bounded with
+        ALL2TEXT_SETUP_COMMAND_TIMEOUT_SECONDS. Avoid installing Jetson Torch/torchaudio
+        replacements unless they match NVIDIA's local PyTorch build.
         """
     elif name.startswith("windows"):
         body = """
         all2text itself is installed with: python -m pip install .
-        Then inspect external setup with:
+        Source installs can invoke the external setup hook. Inspect or rerun setup with:
           python -m all2text setup --dry-run --profile full
 
-        Modern pip/wheel installs must stay noninteractive, so external binaries and model
-        weights are managed by all2text setup after package installation. Common Windows commands:
+        Interactive source installs can ask a yes/no setup question. Noninteractive installs never
+        wait; use ALL2TEXT_SETUP_ASSUME_YES=1 for unattended setup. Built wheels cannot run arbitrary
+        postinstall code. Common Windows commands:
           winget install Gyan.FFmpeg
           winget install UB-Mannheim.TesseractOCR
           winget install TheDocumentFoundation.LibreOffice
@@ -54,11 +55,12 @@ def install_tools_guidance(system: str | None = None) -> str:
     elif name.startswith("darwin"):
         body = """
         all2text itself is installed with: python -m pip install .
-        Then inspect external setup with:
+        Source installs can invoke the external setup hook. Inspect or rerun setup with:
           python -m all2text setup --dry-run --profile full
 
-        Modern pip/wheel installs must stay noninteractive, so external binaries and model
-        weights are managed by all2text setup after package installation. Common Homebrew commands:
+        Interactive source installs can ask a yes/no setup question. Noninteractive installs never
+        wait; use ALL2TEXT_SETUP_ASSUME_YES=1 for unattended setup. Built wheels cannot run arbitrary
+        postinstall code. Common Homebrew commands:
           brew install ffmpeg tesseract libmagic libreoffice
 
         llama.cpp and model files are external. Start an OpenAI-compatible llama.cpp server and use
@@ -67,11 +69,11 @@ def install_tools_guidance(system: str | None = None) -> str:
     else:
         body = """
         all2text itself is installed with: python -m pip install .
-        Then inspect external setup with:
+        Source installs can invoke the external setup hook. Inspect or rerun setup with:
           python -m all2text setup --dry-run --profile full
 
-        Modern pip/wheel installs must stay noninteractive, so external binaries and model
-        weights are managed by all2text setup after package installation. Install ffmpeg/ffprobe,
+        Interactive source installs can ask a yes/no setup question. Noninteractive installs never
+        wait; use ALL2TEXT_SETUP_ASSUME_YES=1 for unattended setup. Install ffmpeg/ffprobe,
         Tesseract, LibreOffice, and llama.cpp using the setup report, your OS package manager, or
         vendor instructions. all2text will detect them automatically when they are on PATH, or you
         can configure absolute paths and endpoint URLs in the TOML config.
