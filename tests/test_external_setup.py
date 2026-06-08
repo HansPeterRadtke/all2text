@@ -127,7 +127,8 @@ def test_capa_uses_detected_newer_python(monkeypatch, tmp_path: Path) -> None:
 
     assert action.status == "installable"
     assert action.safe_to_run is True
-    assert action.commands[0][:3] == ["/usr/bin/python3.11", "-m", "venv"]
+    expected_python = sys.executable if sys.version_info >= (3, 9) else "/usr/bin/python3.11"
+    assert action.commands[0][:3] == [expected_python, "-m", "venv"]
 
 
 def test_interactive_setup_prompt_yes_runs_safe_action(monkeypatch, tmp_path: Path) -> None:
@@ -764,3 +765,35 @@ def test_optional_heavy_alternatives_do_not_make_default_full_plan_missing(monke
     assert actions["olmocr"]["status"] == "optional"
     assert "chartgemma" not in plan["summary"]["missing_or_installable"]
     assert "paddleocr_vl" not in plan["summary"]["missing_or_installable"]
+
+
+def test_llama_cpp_build_targets_only_required_binaries(monkeypatch, tmp_path: Path) -> None:
+    def fake_which(name: str) -> str | None:
+        return f"/usr/bin/{name}" if name in {"git", "cmake", "make", "g++"} else None
+
+    monkeypatch.setattr("all2text.external_setup.shutil.which", fake_which)
+    monkeypatch.setattr("all2text.external_setup.probe_endpoints", lambda endpoints, timeout: [])
+
+    plan = build_setup_plan(
+        default_config(),
+        options=SetupOptions(
+            include_models=False,
+            selected_tools=("llama_cpp",),
+            tools_dir=str(tmp_path / "tools"),
+        ),
+    )
+    action = plan["actions"][0]
+    build_command = action["commands"][2]
+
+    assert action["id"] == "llama_cpp"
+    assert build_command == [
+        "cmake",
+        "--build",
+        str(tmp_path / "tools" / "llama.cpp" / "build"),
+        "--config",
+        "Release",
+        "--target",
+        "llama-server",
+        "llama-cli",
+        "-j2",
+    ]

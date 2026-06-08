@@ -572,10 +572,20 @@ def llama_cpp_action(system: str, machine: str, tools_dir: Path) -> SetupAction:
                 "-DGGML_CUDA=OFF",
                 "-DLLAMA_CURL=OFF",
             ],
-            ["cmake", "--build", str(tools_dir / "llama.cpp" / "build"), "--config", "Release", "-j2"],
+            [
+                "cmake",
+                "--build",
+                str(tools_dir / "llama.cpp" / "build"),
+                "--config",
+                "Release",
+                "--target",
+                "llama-server",
+                "llama-cli",
+                "-j2",
+            ],
         ],
         notes=[
-            f"Jetson/aarch64 detected as {machine}; CUDA/GPU build is intentionally not guessed.",
+            f"Machine detected as {machine}; setup builds only llama-server and llama-cli in CPU/user-space mode.",
             "Use an explicit llama.cpp CUDA build outside setup if GPU flags are required.",
         ],
     )

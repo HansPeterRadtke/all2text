@@ -405,3 +405,5 @@ Manual Jetson setup update, 2026-06-08: radare2 was installed through the OS pac
 Docling Jetson fix: the isolated Docling environment uses the CPU PyTorch index and replaces the full OpenCV wheel with opencv-python-headless to avoid the Jetson static TLS OpenGL loader failure during RapidOCR/table-model imports.
 
 Setup correctness update: the planner now treats ChartGemma, PaddleOCR-VL, GLM-OCR, and olmOCR as optional alternatives when installed Docling/RapidOCR and chart baselines already cover the route. GLM-OCR is no longer considered installed merely because generic transformer libraries are present; actual model or service evidence is required. The provider-family doctor path now recognizes isolated external provider environments such as Docling.
+
+Nitro install test update: the llama.cpp setup action was corrected to build only the required `llama-server` and `llama-cli` targets. The previous default upstream build compiled many tests/examples and could be interrupted even after the required executables already existed.
