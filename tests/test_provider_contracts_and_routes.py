@@ -37,6 +37,7 @@ def test_provider_family_statuses_include_lifecycle_and_blockers(monkeypatch, tm
     (model_dir / "config.json").write_text("{}", encoding="utf-8")
     discover_model_hints.cache_clear()
     monkeypatch.setattr("all2text.providers.model_roots", lambda: [tmp_path / "models"])
+    monkeypatch.setattr("all2text.providers.candidate_external_python", lambda name, config: None)
 
     statuses = provider_family_statuses(default_config())
     by_name = {status.name: status for status in statuses}
@@ -302,3 +303,18 @@ def test_elf_header_metadata_probe_never_executes_binary(tmp_path: Path) -> None
     assert schema["format"] == "elf"
     assert schema["bits"] == 64
     assert schema["code_executed"] is False
+
+
+def test_provider_family_status_detects_external_docling_env(monkeypatch, tmp_path: Path) -> None:
+    python = tmp_path / "tools" / "docling-env" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr("all2text.providers.python_module_available", lambda module: False)
+    monkeypatch.setattr("all2text.providers.external_python_module_available", lambda path, module: True)
+    monkeypatch.setattr("all2text.providers.candidate_external_python", lambda name, config: python if name == "docling" else None)
+
+    status = next(item for item in provider_family_statuses(default_config()) if item.name == "docling")
+
+    assert status.available is True
+    assert status.source == str(python)
+    assert status.details["external_python"] == str(python)

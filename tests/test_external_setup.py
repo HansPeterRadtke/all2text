@@ -691,3 +691,76 @@ def test_docling_install_command_is_pinned_and_cpu_indexed(monkeypatch, tmp_path
     commands = plan["actions"][0]["commands"]
     assert any("opencv-python" in command and "uninstall" in command for command in commands)
     assert any("opencv-python-headless==4.13.0.92" in command for command in commands)
+
+
+def test_glm_ocr_requires_model_not_only_transformers(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "all2text.external_setup.python_module_available",
+        lambda module: module in {"transformers", "accelerate", "sentencepiece"},
+    )
+    monkeypatch.setattr("all2text.external_setup.external_python_module_available", lambda path, module: False)
+    monkeypatch.setattr("all2text.external_setup.find_paths", lambda roots, patterns: [])
+    monkeypatch.setattr(
+        "all2text.external_setup.environment_metadata",
+        lambda system, machine: {
+            "normalized_system": "linux",
+            "python_candidates": [{"executable": "/usr/bin/python3.11", "version": "3.11.8"}],
+            "package_managers": [],
+            "build_tools": {},
+        },
+    )
+
+    plan = build_setup_plan(
+        default_config(),
+        options=SetupOptions(
+            include_tools=False,
+            selected_models=("glm_ocr",),
+            tools_dir=str(tmp_path / "tools"),
+            models_dir=str(tmp_path / "models"),
+        ),
+    )
+
+    assert plan["actions"][0]["id"] == "glm_ocr"
+    assert plan["actions"][0]["status"] == "installable"
+
+
+def test_optional_heavy_alternatives_do_not_make_default_full_plan_missing(monkeypatch, tmp_path: Path) -> None:
+    def fake_find_paths(roots, patterns):
+        text = " ".join(patterns).lower()
+        if "deplot" in text:
+            return [str(tmp_path / "models" / "deplot" / "config.json")]
+        if "unichart" in text:
+            return [str(tmp_path / "models" / "unichart" / "config.json")]
+        return []
+
+    docling_py = tmp_path / "tools" / "docling-env" / "bin" / "python"
+    docling_py.parent.mkdir(parents=True)
+    docling_py.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr("all2text.external_setup.find_paths", fake_find_paths)
+    monkeypatch.setattr("all2text.external_setup.python_module_available", lambda module: False)
+    monkeypatch.setattr("all2text.external_setup.external_python_module_available", lambda path, module: True)
+    monkeypatch.setattr(
+        "all2text.external_setup.environment_metadata",
+        lambda system, machine: {
+            "normalized_system": "linux",
+            "python_candidates": [{"executable": "/usr/bin/python3.11", "version": "3.11.8"}],
+            "package_managers": [],
+            "build_tools": {},
+        },
+    )
+
+    plan = build_setup_plan(
+        default_config(),
+        options=SetupOptions(
+            include_tools=False,
+            tools_dir=str(tmp_path / "tools"),
+            models_dir=str(tmp_path / "models"),
+        ),
+    )
+    actions = {action["id"]: action for action in plan["actions"]}
+
+    assert actions["chartgemma"]["status"] == "optional"
+    assert actions["paddleocr_vl"]["status"] == "optional"
+    assert actions["olmocr"]["status"] == "optional"
+    assert "chartgemma" not in plan["summary"]["missing_or_installable"]
+    assert "paddleocr_vl" not in plan["summary"]["missing_or_installable"]

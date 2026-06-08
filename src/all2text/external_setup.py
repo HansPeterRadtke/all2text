@@ -750,9 +750,24 @@ def build_model_actions(
             huge=False,
         ),
     ]
+    explicit_model_selection = bool(options.selected_models)
+    satisfied_ids = {action.id for action in actions if action.status == "satisfied"}
+    chart_baseline_available = bool({"deplot", "unichart"} & satisfied_ids)
+    document_baseline_available = "docling" in satisfied_ids
     for action in actions:
         action.selected = selector_matches(action.id, selectors)
-        if options.skip_heavy and action.heavy and action.status != "satisfied":
+        if not explicit_model_selection:
+            if action.id == "chartgemma" and chart_baseline_available and action.status != "satisfied":
+                mark_optional_alternative(
+                    action,
+                    "ChartGemma is an optional chart-model alternative; DePlot/UniChart evidence is already installed.",
+                )
+            if action.id in {"paddleocr_vl", "glm_ocr", "olmocr"} and document_baseline_available and action.status != "satisfied":
+                mark_optional_alternative(
+                    action,
+                    "Optional document-OCR alternative; Docling/RapidOCR is installed and tested for the Jetson document route.",
+                )
+        if options.skip_heavy and action.heavy and action.status not in {"satisfied", "optional"}:
             action.status = "blocked"
             action.reason = "heavy model skipped"
             action.safe_to_run = False
@@ -760,6 +775,15 @@ def build_model_actions(
         action.metadata.setdefault("system", system)
         action.metadata.setdefault("machine", machine)
     return actions
+
+
+def mark_optional_alternative(action: SetupAction, reason: str) -> None:
+    action.status = "optional"
+    action.reason = reason
+    action.safe_to_run = False
+    action.blockers = []
+    action.notes.append(reason)
+    action.metadata["optional_alternative"] = True
 
 
 def faster_whisper_action(action_id: str, repo_id: str, models_dir: Path, *, heavy: bool) -> SetupAction:
@@ -943,7 +967,10 @@ def external_env_model_blocker(
     external_env_available = venv_python.exists() and all(
         external_python_module_available(venv_python, module) for module in package_modules
     )
-    if current_available or external_env_available or (huge and model_matches):
+    satisfied_by_current = current_available and (not huge or bool(model_matches))
+    satisfied_by_external_env = external_env_available and (not huge or bool(model_matches))
+    satisfied_by_model = huge and bool(model_matches)
+    if satisfied_by_current or satisfied_by_external_env or satisfied_by_model:
         return SetupAction(
             id=action_id,
             category="model",
@@ -1041,7 +1068,12 @@ def external_env_model_blocker(
 
 def package_module_name(requirement: str) -> str:
     name = requirement.split("==", 1)[0].split(">=", 1)[0].split("<", 1)[0].strip()
-    return name.replace("-", "_")
+    overrides = {
+        "paddlepaddle": "paddle",
+        "opencv-python": "cv2",
+        "opencv-python-headless": "cv2",
+    }
+    return overrides.get(name, name.replace("-", "_"))
 
 
 def external_python_module_available(python: Path, module: str) -> bool:

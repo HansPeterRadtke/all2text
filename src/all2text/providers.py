@@ -78,7 +78,7 @@ class ProviderCandidate:
 
 
 PROVIDER_CANDIDATES: tuple[ProviderCandidate, ...] = (
-    ProviderCandidate("docling", "document_ocr_layout", "document_parser", ("docling",), notes="High-level PDF/document conversion provider."),
+    ProviderCandidate("docling", "document_ocr_layout", "document_parser", ("docling",), execution_status="implemented_when_dependency_found", notes="High-level PDF/document conversion provider; all2text can call an isolated external Docling environment."),
     ProviderCandidate("paddleocr_vl", "document_ocr_layout", "document_ocr_vlm", ("paddleocr", "paddle"), ("paddleocr",), ("PaddleOCR", "paddleocr"), notes="Document OCR/layout VLM; model files are external."),
     ProviderCandidate("glm_ocr", "document_ocr_layout", "document_ocr_vlm", ("transformers",), model_hints=("GLM-OCR", "glm-ocr"), notes="External multimodal OCR model contract."),
     ProviderCandidate("olmocr", "document_ocr_layout", "pdf_ocr", ("olmocr",), model_hints=("olmOCR", "olmocr"), notes="Heavy PDF OCR/linearization provider contract."),
@@ -289,17 +289,31 @@ def candidate_status(candidate: ProviderCandidate, config: Any) -> ProviderStatu
             )
 
     dependency_results = {module: python_module_available(module) for module in candidate.python_modules}
+    external_python = candidate_external_python(candidate.name, config)
+    external_dependency_results = (
+        {module: external_python_module_available(external_python, module) for module in candidate.python_modules}
+        if external_python and candidate.python_modules
+        else {}
+    )
     executable_results = {
         executable: _which_executable(executable) for executable in candidate.executables
     }
     model_matches = discover_model_hints(candidate.model_hints)
 
-    dependency_found = all(dependency_results.values()) if dependency_results else None
+    main_dependency_found = all(dependency_results.values()) if dependency_results else None
+    external_dependency_found = (
+        all(external_dependency_results.values()) if external_dependency_results else None
+    )
+    dependency_found = (
+        bool(main_dependency_found) or bool(external_dependency_found)
+        if dependency_results
+        else None
+    )
     executable_found = any(executable_results.values()) if executable_results else None
     if candidate.name.startswith("deterministic_"):
         available = True
         error = None
-    elif dependency_results and not all(dependency_results.values()):
+    elif dependency_results and not dependency_found:
         available = False
         missing = ", ".join(name for name, found in dependency_results.items() if not found)
         error = f"Python dependency missing: {missing}"
@@ -319,6 +333,8 @@ def candidate_status(candidate: ProviderCandidate, config: Any) -> ProviderStatu
     source = None
     if model_matches:
         source = model_matches[0]
+    elif external_dependency_found and external_python:
+        source = str(external_python)
     elif executable_results:
         source = next((path for path in executable_results.values() if path), None)
 
@@ -342,6 +358,8 @@ def candidate_status(candidate: ProviderCandidate, config: Any) -> ProviderStatu
         details={
             "candidate": candidate.to_dict(),
             "python_dependencies": dependency_results,
+            "external_python": str(external_python) if external_python else None,
+            "external_python_dependencies": external_dependency_results,
             "executables": executable_results,
             "model_matches": model_matches[:10],
             "model_roots": [str(path) for path in model_roots()],
@@ -1235,6 +1253,23 @@ def _family_for_endpoint_task(task: str) -> str | None:
         return "image"
     if task == "llm_text":
         return "text"
+    return None
+
+
+def candidate_external_python(provider_name: str, config: object | None) -> Path | None:
+    try:
+        from all2text.external_setup import default_tools_dir
+    except Exception:
+        return None
+    cfg = config_for_context(config)
+    tools_dir = Path(str(getattr(cfg.options, "setup_tools_dir", "") or "") or default_tools_dir()).expanduser()
+    env_names = [f"{provider_name}-env"]
+    if provider_name == "docling":
+        env_names.append("docling-env")
+    for env_name in dict.fromkeys(env_names):
+        for candidate in external_env_python_candidates(tools_dir / env_name):
+            if candidate.exists():
+                return candidate
     return None
 
 
