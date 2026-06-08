@@ -546,3 +546,7 @@ Remaining blockers and next step:
   setup or external files; they are planned, not silently downloaded.
 - Commit/push: this entry is included in the final checkpoint commit; final commit hash is recorded in
   git history and reported in the session final response.
+
+Manual Jetson setup update, 2026-06-08: radare2 was installed through the OS package manager; faster-whisper base and small plus whisper.cpp base models were downloaded into external model storage; Docling 2.91.0 was installed in an isolated Python 3.11 CPU environment with a smoke conversion. The setup planner now detects that environment as satisfied and uses a pinned CPU-index install command for future Docling setup.
+
+Docling Jetson fix: the isolated Docling environment uses the CPU PyTorch index and replaces the full OpenCV wheel with opencv-python-headless to avoid the Jetson static TLS OpenGL loader failure during RapidOCR/table-model imports.

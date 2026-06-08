@@ -742,11 +742,11 @@ def build_model_actions(
         external_env_model_blocker(
             "docling",
             "Docling",
-            "Separate Python 3.10/3.11 environment may be required on Jetson",
+            "Separate Python 3.10/3.11 CPU environment may be required on Jetson",
             tools_dir,
             models_dir,
             env,
-            packages=("docling",),
+            packages=("docling==2.91.0",),
             huge=False,
         ),
     ]
@@ -930,38 +930,73 @@ def external_env_model_blocker(
     packages: tuple[str, ...],
     huge: bool,
 ) -> SetupAction:
-    current_available = python_module_available(packages[0])
+    package_modules = tuple(package_module_name(package) for package in packages)
+    current_available = all(python_module_available(module) for module in package_modules)
     model_matches = find_paths(
         (str(models_dir), "/data/models/all2text", "/data/models"),
         (f"*{action_id}*", f"*{name.replace('-', '*')}*"),
     )
-    if current_available and (not huge or model_matches):
+    python = select_external_python(environment)
+    env_dir = tools_dir / f"{action_id}-env"
+    normalized_system = str(environment.get("normalized_system") or platform.system()).lower()
+    venv_python = external_venv_python(env_dir, normalized_system)
+    external_env_available = venv_python.exists() and all(
+        external_python_module_available(venv_python, module) for module in package_modules
+    )
+    if current_available or external_env_available or (huge and model_matches):
         return SetupAction(
             id=action_id,
             category="model",
             name=name,
             status="satisfied",
-            detected_path=model_matches[0] if model_matches else sys.executable,
+            detected_path=str(venv_python if external_env_available else (model_matches[0] if model_matches else sys.executable)),
             reason="provider package/model evidence found",
             installer="external_env_or_service",
             approx_size="existing local package/model evidence",
             time_note="no setup action needed",
             confirmation="detected_only",
-            metadata={"packages": packages, "model_matches": model_matches[:20]},
+            metadata={
+                "packages": packages,
+                "package_modules": package_modules,
+                "model_matches": model_matches[:20],
+                "external_python": str(venv_python) if external_env_available else None,
+            },
         )
-    python = select_external_python(environment)
-    env_dir = tools_dir / f"{action_id}-env"
-    normalized_system = str(environment.get("normalized_system") or platform.system()).lower()
-    venv_python = external_venv_python(env_dir, normalized_system)
     commands: list[list[str]] = []
     blockers = [
         "Keep this stack isolated from the main all2text runtime to avoid replacing Jetson/NVIDIA packages.",
     ]
+    install_command = [str(venv_python), "-m", "pip", "install"]
+    post_install_commands: list[list[str]] = []
+    if action_id == "docling":
+        install_command.extend(["--extra-index-url", "https://download.pytorch.org/whl/cpu"])
+        post_install_commands.extend(
+            [
+                [
+                    str(venv_python),
+                    "-m",
+                    "pip",
+                    "uninstall",
+                    "-y",
+                    "opencv-python",
+                    "opencv_python",
+                ],
+                [
+                    str(venv_python),
+                    "-m",
+                    "pip",
+                    "install",
+                    "opencv-python-headless==4.13.0.92",
+                ],
+            ]
+        )
+    install_command.extend(packages)
     if python:
         commands = [
             [python, "-m", "venv", str(env_dir)],
-            [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],
-            [str(venv_python), "-m", "pip", "install", *packages],
+            [str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
+            install_command,
+            *post_install_commands,
         ]
         user_commands = [" ".join(command) for command in commands]
         status = "installable"
@@ -971,8 +1006,8 @@ def external_env_model_blocker(
     else:
         user_commands = [
             f"python3.11 -m venv {env_dir}",
-            f"{external_venv_python(env_dir, normalized_system)} -m pip install --upgrade pip",
-            f"{external_venv_python(env_dir, normalized_system)} -m pip install {' '.join(packages)}",
+            f"{external_venv_python(env_dir, normalized_system)} -m pip install --upgrade pip setuptools wheel",
+            " ".join(install_command),
         ]
         status = "blocked"
         safe_to_run = False
@@ -996,11 +1031,32 @@ def external_env_model_blocker(
         confirmation="explicit_large_model_or_service" if huge else "external_python_env",
         metadata={
             "packages": packages,
+            "package_modules": package_modules,
             "python": python,
             "models_dir": str(models_dir),
             "model_matches": model_matches[:20],
         },
     )
+
+
+def package_module_name(requirement: str) -> str:
+    name = requirement.split("==", 1)[0].split(">=", 1)[0].split("<", 1)[0].strip()
+    return name.replace("-", "_")
+
+
+def external_python_module_available(python: Path, module: str) -> bool:
+    try:
+        completed = subprocess.run(
+            [str(python), "-c", f"import {module}"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=8,
+            check=False,
+        )
+    except Exception:
+        return False
+    return completed.returncode == 0
 
 
 def select_external_python(environment: dict[str, Any]) -> str:

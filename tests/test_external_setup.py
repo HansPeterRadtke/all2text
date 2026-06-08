@@ -627,3 +627,67 @@ def test_config_accepts_setup_options() -> None:
     assert config.options.setup_tools_dir == "/tmp/tools"
     assert config.options.setup_models_dir == "/tmp/models"
     assert config.options.setup_report_path == "/tmp/setup.json"
+
+
+def test_external_env_satisfied_when_docling_env_imports(monkeypatch, tmp_path: Path) -> None:
+    python = tmp_path / "tools" / "docling-env" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr("all2text.external_setup.python_module_available", lambda module: False)
+    monkeypatch.setattr("all2text.external_setup.external_python_module_available", lambda path, module: True)
+    monkeypatch.setattr(
+        "all2text.external_setup.environment_metadata",
+        lambda system, machine: {
+            "normalized_system": "linux",
+            "python_candidates": [{"executable": "/usr/bin/python3.11", "version": "3.11.8"}],
+            "package_managers": [],
+            "build_tools": {},
+        },
+    )
+
+    plan = build_setup_plan(
+        default_config(),
+        options=SetupOptions(
+            include_tools=False,
+            selected_models=("docling",),
+            tools_dir=str(tmp_path / "tools"),
+            models_dir=str(tmp_path / "models"),
+        ),
+    )
+    action = plan["actions"][0]
+
+    assert action["id"] == "docling"
+    assert action["status"] == "satisfied"
+    assert action["detected_path"] == str(python)
+
+
+def test_docling_install_command_is_pinned_and_cpu_indexed(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("all2text.external_setup.python_module_available", lambda module: False)
+    monkeypatch.setattr("all2text.external_setup.external_python_module_available", lambda path, module: False)
+    monkeypatch.setattr(
+        "all2text.external_setup.environment_metadata",
+        lambda system, machine: {
+            "normalized_system": "linux",
+            "python_candidates": [{"executable": "/usr/bin/python3.11", "version": "3.11.8"}],
+            "package_managers": [],
+            "build_tools": {},
+        },
+    )
+
+    plan = build_setup_plan(
+        default_config(),
+        options=SetupOptions(
+            include_tools=False,
+            selected_models=("docling",),
+            tools_dir=str(tmp_path / "tools"),
+            models_dir=str(tmp_path / "models"),
+        ),
+    )
+    install_command = plan["actions"][0]["commands"][2]
+
+    assert "--extra-index-url" in install_command
+    assert "https://download.pytorch.org/whl/cpu" in install_command
+    assert "docling==2.91.0" in install_command
+    commands = plan["actions"][0]["commands"]
+    assert any("opencv-python" in command and "uninstall" in command for command in commands)
+    assert any("opencv-python-headless==4.13.0.92" in command for command in commands)
