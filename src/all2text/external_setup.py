@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from all2text.config import All2TextConfig, config_for_context
+from all2text.coverage import build_coverage_matrix, coverage_prompt_recommended
 
 
 SETUP_REPORT_SCHEMA = "all2text.setup_report.v1"
@@ -237,6 +238,8 @@ def build_setup_plan(
     if opts.include_models and not opts.skip_models:
         actions.extend(model_actions)
     selected = [action for action in actions if action.selected]
+    action_dicts = [action.to_dict() for action in selected]
+    coverage = build_coverage_matrix(action_dicts, environment, profile=opts.profile, mode=opts.mode)
     return {
         "schema": "all2text.setup_plan.v1",
         "platform": {
@@ -249,8 +252,9 @@ def build_setup_plan(
         "profile": opts.profile,
         "mode": opts.mode,
         "paths": paths,
-        "actions": [action.to_dict() for action in selected],
-        "summary": setup_summary(selected),
+        "actions": action_dicts,
+        "coverage": coverage,
+        "summary": setup_summary(selected, coverage=coverage),
         "last_report": summarize_last_setup_report(load_last_setup_report(paths["report_path"])),
         "notes": [
             "Source/legacy pip installs invoke the all2text setup hook when the build backend runs.",
@@ -332,7 +336,7 @@ def python_version(executable: str) -> str:
     return (completed.stdout or completed.stderr).strip().replace("Python ", "")
 
 
-def setup_summary(actions: list[SetupAction]) -> dict[str, Any]:
+def setup_summary(actions: list[SetupAction], coverage: dict[str, Any] | None = None) -> dict[str, Any]:
     counts: dict[str, int] = {}
     for action in actions:
         counts[action.status] = counts.get(action.status, 0) + 1
@@ -343,12 +347,18 @@ def setup_summary(actions: list[SetupAction]) -> dict[str, Any]:
     missing = [
         action.id for action in actions if action.status in {"missing", "blocked", "installable"}
     ]
+    coverage_summary = (coverage or {}).get("summary", {}) if isinstance(coverage, dict) else {}
+    required_missing = list(coverage_summary.get("missing_required") or [])
+    degraded_required = list(coverage_summary.get("degraded_required") or [])
     return {
         "counts": counts,
         "missing_or_installable": missing,
         "safe_installable": installable,
         "blocked": blocked,
-        "prompt_recommended": bool(missing),
+        "required_coverage_missing": required_missing,
+        "required_coverage_degraded": degraded_required,
+        "coverage_required_covered": bool(coverage_summary.get("required_covered", not required_missing)),
+        "prompt_recommended": bool(required_missing or installable),
     }
 
 
@@ -624,52 +634,84 @@ def radare2_action(system: str, machine: str, tools_dir: Path) -> SetupAction:
 
 def capa_action(system: str, machine: str, tools_dir: Path) -> SetupAction:
     env_dir = tools_dir / "capa-venv"
+    rules_dir = tools_dir / "capa-rules"
     detected = find_executable(
         "capa",
         env_dir / "bin" / "capa",
         env_dir / "Scripts" / "capa.exe",
     )
-    if detected:
+    rules = find_capa_rules(tools_dir)
+    if detected and rules:
         return SetupAction(
             id="capa",
             category="tool",
             name="capa",
             status="satisfied",
             detected_path=detected,
-            reason="capa found on PATH",
+            reason="capa executable and rules found",
             installer="python_venv",
+            metadata={"rules_path": str(rules)},
         )
     blockers = []
     environment = environment_metadata(system, machine)
     python = sys.executable if sys.version_info >= (3, 9) else select_external_python(environment)
-    if not python:
+    if not python and not detected:
         blockers.append("current Python is < 3.9 and no Python 3.10/3.11 interpreter was detected")
+    if not shutil.which("git") and not rules:
+        blockers.append("git is required to clone capa-rules")
     venv_python = external_venv_python(env_dir, system)
+    commands: list[list[str]] = []
+    if not detected:
+        commands.extend([
+            [python or "python3.11", "-m", "venv", str(env_dir)],
+            [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],
+            [str(venv_python), "-m", "pip", "install", "flare-capa"],
+        ])
+    if not rules:
+        commands.append(["git", "clone", "--depth", "1", "https://github.com/mandiant/capa-rules.git", str(rules_dir)])
+    reason = "capa rules not found" if detected and not rules else "capa executable or rules not found"
     return SetupAction(
         id="capa",
         category="tool",
         name="capa",
         status="blocked" if blockers else "installable",
-        reason="capa executable not found",
-        target_path=str(env_dir),
+        reason=reason,
+        target_path=str(env_dir if not detected else rules_dir),
         installer="python_venv",
         safe_to_run=not blockers,
         blockers=blockers,
-        approx_size="Python virtualenv with flare-capa dependencies",
+        approx_size="Python virtualenv plus capa-rules checkout",
         time_note="may take a few minutes when compatible wheels are available",
         confirmation="safe_user_space",
-        commands=[
-            [python or "python3.11", "-m", "venv", str(env_dir)],
-            [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],
-            [str(venv_python), "-m", "pip", "install", "flare-capa"],
-        ],
-        user_commands=[
-            " ".join([python or "python3.11", "-m", "venv", str(env_dir)]),
-            f"{venv_python} -m pip install --upgrade pip",
-            f"{venv_python} -m pip install flare-capa",
-        ],
-        metadata={"machine": machine, "python": python, "python_candidates": environment.get("python_candidates")},
+        commands=commands,
+        user_commands=[" ".join(command) for command in commands],
+        metadata={
+            "machine": machine,
+            "python": python,
+            "python_candidates": environment.get("python_candidates"),
+            "detected_executable": detected,
+            "rules_path": str(rules) if rules else None,
+            "rules_target": str(rules_dir),
+        },
     )
+
+
+def find_capa_rules(tools_dir: Path) -> Path | None:
+    candidates = []
+    if os.environ.get("ALL2TEXT_CAPA_RULES"):
+        candidates.append(Path(os.environ["ALL2TEXT_CAPA_RULES"]).expanduser())
+    candidates.extend([
+        tools_dir / "capa-rules",
+        tools_dir / "capa-rules" / "rules",
+        Path("/data/opt/all2text-tools/capa-rules"),
+        Path("/data/opt/all2text-tools/capa-rules/rules"),
+    ])
+    for candidate in candidates:
+        if candidate.exists() and (candidate / "rule-example.yml").exists():
+            return candidate
+        if candidate.exists() and any(candidate.rglob("*.yml")):
+            return candidate
+    return None
 
 
 def build_model_actions(
@@ -964,6 +1006,33 @@ def external_env_model_blocker(
     packages: tuple[str, ...],
     huge: bool,
 ) -> SetupAction:
+    architecture = str(environment.get("architecture") or "").lower()
+    if action_id == "paddleocr_vl" and architecture in {"aarch64", "arm64", "arm"}:
+        return SetupAction(
+            id=action_id,
+            category="model",
+            name=name,
+            status="blocked",
+            reason="PaddlePaddle local runtime is not a default ARM64 route",
+            installer="container_or_service",
+            safe_to_run=False,
+            heavy=True,
+            blockers=[
+                "Use Docling/RapidOCR/Tesseract locally on ARM64, or deploy PaddleOCR-VL as an x86_64 GPU/container/service provider.",
+            ],
+            user_commands=[
+                "Deploy PaddleOCR-VL on a supported x86_64 GPU host or container and configure an OpenAI-compatible/service endpoint.",
+            ],
+            approx_size="large model/service stack",
+            time_note="can take a long time or hours on a suitable GPU host",
+            confirmation="service_or_container_only_on_arm64",
+            metadata={
+                "local_install_supported": False,
+                "service_route": "container_or_remote_endpoint",
+                "architecture": architecture,
+                "packages": packages,
+            },
+        )
     package_modules = tuple(package_module_name(package) for package in packages)
     current_available = all(python_module_available(module) for module in package_modules)
     model_matches = find_paths(
@@ -1486,10 +1555,14 @@ def setup_recommendation(config: All2TextConfig | None = None) -> dict[str, Any]
         and bool((status.details or {}).get("auto_invoke", False))
     ]
     missing = list((plan.get("summary") or {}).get("missing_or_installable") or [])
+    coverage = plan.get("coverage") if isinstance(plan.get("coverage"), dict) else {}
+    coverage_missing = list(((coverage.get("summary") or {}) if coverage else {}).get("missing_required") or [])
     return {
-        "needed": bool(unavailable_enabled),
+        "needed": bool(coverage_missing or unavailable_enabled),
         "unavailable_enabled_providers": unavailable_enabled,
         "missing_or_installable": missing,
+        "missing_required_coverage": coverage_missing,
+        "coverage": coverage,
         "command": setup_command("full"),
         "plan_summary": plan.get("summary", {}),
     }

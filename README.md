@@ -74,7 +74,9 @@ Automation controls use environment variables that pip can pass through:
 
 ```bash
 ALL2TEXT_SETUP_ASSUME_YES=1 python -m pip install .
+python -m all2text bootstrap --package all2text --yes
 ALL2TEXT_SETUP_MODE=full ALL2TEXT_SETUP_ASSUME_YES=1 python -m pip install .
+python -m all2text bootstrap --package all2text --yes
 ALL2TEXT_SETUP_NONINTERACTIVE=1 python -m pip install .
 ALL2TEXT_SETUP_MODE=skip python -m pip install .
 ```

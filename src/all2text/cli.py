@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from all2text.api import run
+from all2text.bootstrap import BootstrapOptions, build_bootstrap_plan, execute_bootstrap, render_bootstrap_text
 from all2text.capabilities import capability_report, provider_execution_summary
 from all2text.config import PROFILE_DEFAULTS, load_config, options_with_profile
 from all2text.external_setup import (
@@ -59,6 +60,47 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-archive-members", type=int, help="Maximum archive members to list.")
     return parser
+
+
+def build_bootstrap_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="all2text bootstrap",
+        description="Print or run the one-command all2text install plus external setup bootstrap plan.",
+    )
+    parser.add_argument("--package", default="all2text", help="Package spec to pass to pip, for example all2text or .")
+    parser.add_argument("--profile", default="full", choices=sorted(set(PROFILE_DEFAULTS) | {"minimal"}))
+    parser.add_argument("--mode", default="full", choices=("minimal", "full", "tools", "models", "plan", "skip"))
+    parser.add_argument("--yes", "--assume-yes", action="store_true", help="Provision safe selected actions without prompting.")
+    parser.add_argument("--noninteractive", action="store_true", help="Force noninteractive setup behavior.")
+    parser.add_argument("--skip-heavy", action="store_true", help="Skip heavy downloads/builds.")
+    parser.add_argument("--skip-models", action="store_true", help="Skip model setup actions.")
+    parser.add_argument("--python", default=sys.executable, help="Python executable used in generated commands.")
+    parser.add_argument("--json", action="store_true", help="Print JSON instead of text.")
+    parser.add_argument("--run", action="store_true", help="Run the bootstrap steps now.")
+    return parser
+
+
+def bootstrap_main(argv: list[str]) -> int:
+    parser = build_bootstrap_parser()
+    args = parser.parse_args(argv)
+    plan = build_bootstrap_plan(
+        BootstrapOptions(
+            package=args.package,
+            profile=args.profile,
+            mode=args.mode,
+            yes=args.yes,
+            noninteractive=args.noninteractive,
+            skip_heavy=args.skip_heavy,
+            skip_models=args.skip_models,
+            python=args.python,
+        )
+    )
+    if args.run:
+        report = execute_bootstrap(plan)
+        print(json_dumps(report, indent=2) if args.json else render_bootstrap_text(plan), end="")
+        return 0 if report.get("status") == "completed" else 1
+    print(json_dumps(plan, indent=2) if args.json else render_bootstrap_text(plan), end="")
+    return 0
 
 
 def build_setup_parser() -> argparse.ArgumentParser:
@@ -206,6 +248,8 @@ def main(argv: list[str] | None = None) -> int:
         argv = list(argv)
     if argv and argv[0] == "setup":
         return setup_main(argv[1:])
+    if argv and argv[0] == "bootstrap":
+        return bootstrap_main(argv[1:])
     if argv and argv[0] == "doctor":
         argv = ["--capabilities", *argv[1:]]
     if argv and argv[0] == "install-tools":
@@ -246,6 +290,7 @@ def main(argv: list[str] | None = None) -> int:
             config,
             options=SetupOptions(profile=options.profile, skip_heavy=True),
         )
+        report["coverage"] = report["setup"].get("coverage")
         print(json_dumps(report, indent=2))
         return 0
     if not args.source_folder or not args.target_folder:

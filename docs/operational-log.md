@@ -554,3 +554,13 @@ Docling Jetson fix: the isolated Docling environment uses the CPU PyTorch index 
 Setup correctness update: the planner now treats ChartGemma, PaddleOCR-VL, GLM-OCR, and olmOCR as optional alternatives when installed Docling/RapidOCR and chart baselines already cover the route. GLM-OCR is no longer considered installed merely because generic transformer libraries are present; actual model or service evidence is required. The provider-family doctor path now recognizes isolated external provider environments such as Docling.
 
 Nitro install test update: the llama.cpp setup action was corrected to build only the required `llama-server` and `llama-cli` targets. The previous default upstream build compiled many tests/examples and could be interrupted even after the required executables already existed.
+
+## 2026-06-09 - Bootstrap and coverage matrix implementation
+
+Implemented directly on Jetson without Codex: added the provider coverage matrix, platform manifest logic, bootstrap command planning, doctor coverage exposure, ARM64 PaddleOCR-VL service fallback, and tests for Jetson coverage plus Windows/PowerShell bootstrap generation. Validation details are recorded in the commit report.
+
+Capa rules fix, 2026-06-09: Capa executable detection now also requires a capa-rules checkout. Jetson setup installed capa-rules under the external tools area, and the final validation ran Capa with an explicit rules path on /bin/ls.
+
+## 2026-06-09 - Bootstrap coverage matrix final checkpoint
+
+Direct Jetson implementation, no Codex. Added all2text bootstrap, a provider-family coverage matrix, platform manifest routing, doctor coverage exposure, ARM64 PaddleOCR-VL service fallback, and Capa rules-aware setup. Jetson validation showed full setup coverage has 12 covered families and 2 degraded schema-probe families, with no missing required coverage and no safe setup actions. Minimal setup also has no missing required coverage. Full pytest passed. Focused bootstrap/setup tests passed. Smoke conversion converted text, PDF, GeoJSON, PNG, DXF, WAV, and binary samples with no conversion errors. Direct probes confirmed Docling subprocess PDF extraction, Tesseract availability, radare2/rabin2 ELF metadata, whisper.cpp model loading, Capa 9.4.0 availability, and Capa rules installation. The Capa executable alone is no longer considered complete; setup now requires a capa-rules checkout.
