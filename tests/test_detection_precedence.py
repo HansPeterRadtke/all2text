@@ -103,3 +103,19 @@ def test_mime_still_classifies_unmapped_extension_without_content_signature(tmp_
 
     assert classification.rough_category == "image"
     assert classification.concrete_format == "PNG"
+
+
+def test_ifc_extension_routes_to_cad_backend(tmp_path: Path) -> None:
+    from all2text.detection import classify_path
+    from all2text.metadata import collect_metadata
+    from tests.conftest import make_options
+
+    path = tmp_path / "model.ifc"
+    path.write_text("ISO-10303-21;\nDATA;\n#1=IFCPROJECT('x',$,'Project',$,$,$,$,$,$);\nENDSEC;\nEND-ISO-10303-21;\n", encoding="utf-8")
+    options = make_options()
+    metadata = collect_metadata(path, entry_type="file", link_target=None, options=options)
+    classification = classify_path(path, metadata=metadata, entry_type="file", options=options)
+
+    assert classification.rough_category == "cad_or_technical"
+    assert classification.concrete_format == "IFC"
+    assert classification.is_textual is True

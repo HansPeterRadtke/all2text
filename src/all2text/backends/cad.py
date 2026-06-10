@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -88,24 +89,117 @@ def dxf_schema(path: Path) -> tuple[dict[str, Any], list[str], list[str]]:
 
 
 def ifc_schema(path: Path) -> tuple[dict[str, Any], list[str], list[str]]:
+    warnings: list[str] = []
     try:
         import ifcopenshell
     except Exception as exc:
-        return {}, [f"ifcopenshell_unavailable:{exc}"], []
+        warnings.append(f"ifcopenshell_unavailable:{exc}")
+        external = external_ifcopenshell_python()
+        if external:
+            schema, warning = ifc_schema_subprocess(external, path)
+            if schema:
+                return schema, [], ["ifcopenshell_external_schema_probe"]
+            if warning:
+                warnings.append(warning)
+    else:
+        try:
+            return ifc_schema_with_module(ifcopenshell, path), [], ["ifcopenshell_schema_probe"]
+        except Exception as exc:
+            warnings.append(f"ifcopenshell_schema_probe_failed:{exc}")
+    schema, text_warnings, methods = ifc_text_schema(path)
+    if schema:
+        if warnings or text_warnings:
+            schema = dict(schema)
+            schema["optional_provider_warnings"] = [*warnings, *text_warnings]
+        return schema, [], methods
+    return schema, [*warnings, *text_warnings], methods
+
+
+def ifc_schema_with_module(ifcopenshell: Any, path: Path) -> dict[str, Any]:
+    model = ifcopenshell.open(str(path))
+    counts: dict[str, int] = {}
+    for item in model:
+        kind = str(item.is_a())
+        counts[kind] = counts.get(kind, 0) + 1
+    return {
+        "provider": "ifcopenshell",
+        "format": "ifc",
+        "entity_counts": dict(sorted(counts.items())[:200]),
+        "geometry_dumped": False,
+    }
+
+
+def external_ifcopenshell_python() -> Path | None:
+    candidates = [
+        Path("/data/opt/all2text-tools/ifcopenshell-env/bin/python"),
+        Path.home() / ".local" / "share" / "all2text" / "tools" / "ifcopenshell-env" / "bin" / "python",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def ifc_text_schema(path: Path) -> tuple[dict[str, Any], list[str], list[str]]:
+    counts: dict[str, int] = {}
+    total = 0
     try:
-        model = ifcopenshell.open(str(path))
-        counts: dict[str, int] = {}
-        for item in model:
-            kind = str(item.is_a())
-            counts[kind] = counts.get(kind, 0) + 1
-        return {
-            "provider": "ifcopenshell",
-            "format": "ifc",
-            "entity_counts": dict(sorted(counts.items())[:200]),
-            "geometry_dumped": False,
-        }, [], ["ifcopenshell_schema_probe"]
+        for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw_line.strip()
+            if not line.startswith("#") or "=" not in line:
+                continue
+            right = line.split("=", 1)[1].lstrip()
+            name = []
+            for char in right:
+                if char.isalpha() or char.isdigit() or char == "_":
+                    name.append(char)
+                else:
+                    break
+            if not name:
+                continue
+            entity = "".join(name).upper()
+            if entity.startswith("IFC"):
+                counts[entity] = counts.get(entity, 0) + 1
+                total += 1
     except Exception as exc:
-        return {}, [f"ifcopenshell_schema_probe_failed:{exc}"], []
+        return {}, [f"ifc_text_schema_probe_failed:{exc}"], []
+    return {
+        "provider": "builtin_ifc_text_parser",
+        "format": "ifc",
+        "entity_counts": dict(sorted(counts.items())[:200]),
+        "entity_count_total": total,
+        "geometry_dumped": False,
+    }, [], ["ifc_text_schema_probe"]
+
+
+def ifc_schema_subprocess(python: Path, path: Path, timeout_seconds: int = 60) -> tuple[dict[str, Any], str]:
+    script = """
+import json, sys
+import ifcopenshell
+model = ifcopenshell.open(sys.argv[1])
+counts = {}
+for item in model:
+    kind = str(item.is_a())
+    counts[kind] = counts.get(kind, 0) + 1
+print(json.dumps({"provider": "ifcopenshell", "format": "ifc", "entity_counts": dict(sorted(counts.items())[:200]), "geometry_dumped": False}))
+"""
+    try:
+        completed = subprocess.run(
+            [str(python), "-c", script, str(path)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except Exception as exc:
+        return {}, f"ifcopenshell_external_schema_probe_failed:{type(exc).__name__}:{exc}"
+    if completed.returncode != 0:
+        return {}, "ifcopenshell_external_schema_probe_failed:" + completed.stderr[-500:]
+    try:
+        return json.loads(completed.stdout), ""
+    except Exception as exc:
+        return {}, f"ifcopenshell_external_schema_probe_bad_json:{type(exc).__name__}:{exc}"
 
 
 def safe_text_source(path: Path) -> str:

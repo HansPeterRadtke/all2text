@@ -163,6 +163,8 @@ EXTENSION_HINTS: dict[str, tuple[str, str]] = {
     ".gpkg": ("geospatial", "GeoPackage"),
     ".dxf": ("cad_or_technical", "DXF"),
     ".dwg": ("cad_or_technical", "DWG"),
+    ".ifc": ("cad_or_technical", "IFC"),
+    ".ifczip": ("cad_or_technical", "IFCZIP"),
     ".step": ("cad_or_technical", "STEP"),
     ".stp": ("cad_or_technical", "STEP"),
     ".stl": ("cad_or_technical", "STL"),

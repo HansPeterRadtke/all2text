@@ -33,7 +33,20 @@ def test_jetson_installed_stack_has_no_missing_required_coverage() -> None:
     ]
     matrix = build_coverage_matrix(
         actions,
-        {"normalized_system": "linux", "architecture": "aarch64", "is_jetson": True},
+        {
+            "normalized_system": "linux",
+            "architecture": "aarch64",
+            "is_jetson": True,
+            "python_modules": {
+                "ezdxf": True,
+                "numpy": True,
+                "h5py": True,
+                "netCDF4": True,
+                "astropy": True,
+                "pyarrow": True,
+                "scipy": True,
+            },
+        },
         profile="minimal",
         mode="minimal",
     )
@@ -66,6 +79,15 @@ def test_paddleocr_vl_arm64_is_container_or_service_not_local_install(monkeypatc
             "python_candidates": [{"executable": "/usr/bin/python3.11", "version": "3.11.8"}],
             "package_managers": ["apt-get"],
             "build_tools": {},
+            "python_modules": {
+                "ezdxf": True,
+                "numpy": True,
+                "h5py": True,
+                "netCDF4": True,
+                "astropy": True,
+                "pyarrow": True,
+                "scipy": True,
+            },
         },
     )
 
@@ -142,6 +164,15 @@ def test_setup_plan_includes_coverage_and_summary_prompt_uses_coverage(monkeypat
             "python_candidates": [{"executable": "/usr/bin/python3.11", "version": "3.11.8"}],
             "package_managers": ["apt-get"],
             "build_tools": {},
+            "python_modules": {
+                "ezdxf": True,
+                "numpy": True,
+                "h5py": True,
+                "netCDF4": True,
+                "astropy": True,
+                "pyarrow": True,
+                "scipy": True,
+            },
         },
     )
 
@@ -198,3 +229,65 @@ def test_capa_action_satisfied_when_rules_exist(monkeypatch, tmp_path: Path) -> 
 
     assert action.status == "satisfied"
     assert action.metadata["rules_path"] == str(rules)
+
+
+def test_ifcopenshell_action_uses_external_python_env(monkeypatch, tmp_path: Path) -> None:
+    from all2text.external_setup import ifcopenshell_action
+
+    monkeypatch.setattr("all2text.external_setup.python_module_available", lambda module: False)
+    monkeypatch.setattr("all2text.external_setup.external_python_module_available", lambda path, module: False)
+    monkeypatch.setattr(
+        "all2text.external_setup.environment_metadata",
+        lambda system, machine: {"python_candidates": [{"executable": "/usr/bin/python3.11", "version": "3.11.8"}]},
+    )
+
+    action = ifcopenshell_action("linux", "aarch64", tmp_path / "tools")
+
+    assert action.status == "installable"
+    assert action.safe_to_run is True
+    assert action.commands[-1][-2:] == ["--only-binary=:all:", "ifcopenshell"]
+
+
+def test_ifc_schema_subprocess_parses_json(monkeypatch, tmp_path: Path) -> None:
+    from types import SimpleNamespace
+    from all2text.backends.cad import ifc_schema_subprocess
+
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(returncode=0, stdout='{"provider": "ifcopenshell", "format": "ifc", "entity_counts": {"IfcProject": 1}}', stderr='')
+
+    monkeypatch.setattr("all2text.backends.cad.subprocess.run", fake_run)
+    schema, warning = ifc_schema_subprocess(tmp_path / "python", tmp_path / "model.ifc")
+
+    assert warning == ""
+    assert schema["entity_counts"] == {"IfcProject": 1}
+
+
+def test_builtin_ifc_text_schema_counts_entities(tmp_path: Path) -> None:
+    from all2text.backends.cad import ifc_text_schema
+
+    path = tmp_path / "model.ifc"
+    path.write_text(
+        "ISO-10303-21;\nDATA;\n#1=IFCPROJECT('x',$,'Project',$,$,$,$,$,$);\n#2=IFCSITE('y',$,'Site',$,$,$,$,$,$,$,$,$,$,$);\nENDSEC;\nEND-ISO-10303-21;\n",
+        encoding="utf-8",
+    )
+
+    schema, warnings, methods = ifc_text_schema(path)
+
+    assert warnings == []
+    assert methods == ["ifc_text_schema_probe"]
+    assert schema["provider"] == "builtin_ifc_text_parser"
+    assert schema["entity_counts"] == {"IFCPROJECT": 1, "IFCSITE": 1}
+
+
+def test_netcdf_schema_subprocess_parses_json(monkeypatch, tmp_path: Path) -> None:
+    from types import SimpleNamespace
+    from all2text.backends.scientific import netcdf_schema_subprocess
+
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(returncode=0, stdout='{"provider": "netCDF4", "format": "netcdf", "dimensions": {"x": 3}, "variables": []}', stderr='')
+
+    monkeypatch.setattr("all2text.backends.scientific.subprocess.run", fake_run)
+    schema, warning = netcdf_schema_subprocess(tmp_path / "data.nc")
+
+    assert warning == ""
+    assert schema["dimensions"] == {"x": 3}

@@ -71,6 +71,7 @@ def platform_manifest(environment: dict[str, Any] | None = None) -> dict[str, An
         "service_route": service_route,
         "container_route": "docker_or_nvidia_container_toolkit" if has_docker or not system.startswith("windows") else "wsl_or_external_service",
         "model_route": "external_model_root_with_cache_and_explicit_large_model_approval",
+        "python_modules": env.get("python_modules", {}),
         "warnings": warnings,
     }
 
@@ -207,8 +208,23 @@ def _coverage_families(
     else:
         families.append(missing("Binary/static analysis", "binary_static", ["file", "radare2", "capa"], "Install file/libmagic, radare2, and Capa."))
 
-    families.append(CoverageFamily("cad_bim", "CAD and BIM", "degraded", selected_provider="schema_probe", fallback_provider="ezdxf_ifcopenshell_external_env", install_action_ids=["ezdxf", "ifcopenshell"], blocker="CAD/BIM rich extraction needs optional external envs; schema probes are available.", evidence=["builtin_schema_probe"]))
-    families.append(CoverageFamily("scientific_arrays", "Scientific arrays", "degraded", selected_provider="safe_schema_probe", fallback_provider="h5py_netcdf4_astropy_pixi", install_action_ids=["h5py", "netcdf4", "astropy", "pyarrow"], blocker="Scientific rich extraction depends on optional native stacks; safe schema probes are available.", evidence=["builtin_schema_probe"]))
+    modules = (manifest.get("python_modules") or {}) if isinstance(manifest.get("python_modules"), dict) else {}
+    has_ezdxf = bool(modules.get("ezdxf"))
+    has_ifc = bool(modules.get("ifcopenshell")) or ok("ifcopenshell")
+    if has_ezdxf:
+        provider = "ezdxf+ifcopenshell" if has_ifc else "ezdxf+builtin_ifc_text_schema"
+        evidence_items = ["ezdxf", "ifc_text_schema"] + (["ifcopenshell"] if has_ifc else [])
+        families.append(CoverageFamily("cad_bim", "CAD and BIM", "covered", selected_provider=provider, fallback_provider="ifcopenshell_container_for_geometry", install_action_ids=["ifcopenshell"], optional_action_ids=["ifcopenshell"], evidence=evidence_items))
+    else:
+        families.append(missing("CAD and BIM", "cad_bim", ["ifcopenshell"], "Install ezdxf or configure a CAD/BIM service."))
+
+    scientific_modules = [name for name in ("numpy", "h5py", "netCDF4", "astropy", "pyarrow", "scipy") if modules.get(name)]
+    if {"numpy", "h5py", "netCDF4", "astropy", "pyarrow", "scipy"}.issubset(set(scientific_modules)):
+        families.append(CoverageFamily("scientific_arrays", "Scientific arrays", "covered", selected_provider="numpy+h5py+netCDF4+astropy+pyarrow+scipy", fallback_provider="pixi_conda_native_stack", install_action_ids=[], evidence=scientific_modules))
+    elif scientific_modules:
+        families.append(CoverageFamily("scientific_arrays", "Scientific arrays", "degraded", selected_provider="partial_python_schema_stack", fallback_provider="pixi_conda_native_stack", install_action_ids=[], blocker="Some scientific formats are covered, but not the full NPY/HDF5/NetCDF/FITS/Parquet/MAT stack.", evidence=scientific_modules))
+    else:
+        families.append(missing("Scientific arrays", "scientific_arrays", [], "Install numpy, h5py, netCDF4, astropy, pyarrow, and scipy or use a pixi/conda native stack."))
 
     _apply_platform_notes(families, manifest)
     return families

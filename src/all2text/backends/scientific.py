@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -133,20 +135,64 @@ def hdf5_schema(path: Path) -> tuple[dict[str, Any], list[str], list[str]]:
 
 
 def netcdf_schema(path: Path) -> tuple[dict[str, Any], list[str], list[str]]:
+    warnings: list[str] = []
     try:
         import netCDF4
     except Exception as exc:
-        return {}, [f"netCDF4_unavailable:{exc}"], []
+        warnings.append(f"netCDF4_unavailable:{exc}")
+    else:
+        try:
+            return netcdf_schema_with_module(netCDF4, path), [], ["netcdf_schema_probe"]
+        except Exception as exc:
+            warnings.append(f"netcdf_schema_probe_failed:{exc}")
+    schema, warning = netcdf_schema_subprocess(path)
+    if schema:
+        if warnings:
+            schema = dict(schema)
+            schema["fallback_warnings"] = warnings
+        return schema, [], ["netcdf_subprocess_schema_probe"]
+    return {}, [*warnings, warning], []
+
+
+def netcdf_schema_with_module(netCDF4: Any, path: Path) -> dict[str, Any]:
+    with netCDF4.Dataset(path, "r") as dataset:
+        variables = [
+            {"name": name, "dimensions": list(var.dimensions), "shape": list(var.shape), "dtype": str(var.dtype)}
+            for name, var in list(dataset.variables.items())[:100]
+        ]
+        dimensions = {name: int(len(value)) for name, value in dataset.dimensions.items()}
+    return {"provider": "netCDF4", "format": "netcdf", "dimensions": dimensions, "variables": variables}
+
+
+def netcdf_schema_subprocess(path: Path, timeout_seconds: int = 30) -> tuple[dict[str, Any], str]:
+    script = """
+import json, sys
+import netCDF4
+with netCDF4.Dataset(sys.argv[1], 'r') as dataset:
+    variables = [
+        {'name': name, 'dimensions': list(var.dimensions), 'shape': list(var.shape), 'dtype': str(var.dtype)}
+        for name, var in list(dataset.variables.items())[:100]
+    ]
+    dimensions = {name: int(len(value)) for name, value in dataset.dimensions.items()}
+print(json.dumps({'provider': 'netCDF4', 'format': 'netcdf', 'dimensions': dimensions, 'variables': variables}))
+"""
     try:
-        with netCDF4.Dataset(path, "r") as dataset:
-            variables = [
-                {"name": name, "dimensions": list(var.dimensions), "shape": list(var.shape), "dtype": str(var.dtype)}
-                for name, var in list(dataset.variables.items())[:100]
-            ]
-            dimensions = {name: int(len(value)) for name, value in dataset.dimensions.items()}
-        return {"provider": "netCDF4", "format": "netcdf", "dimensions": dimensions, "variables": variables}, [], ["netcdf_schema_probe"]
+        completed = subprocess.run(
+            [sys.executable, "-c", script, str(path)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+            check=False,
+        )
     except Exception as exc:
-        return {}, [f"netcdf_schema_probe_failed:{exc}"], []
+        return {}, f"netcdf_subprocess_schema_probe_failed:{type(exc).__name__}:{exc}"
+    if completed.returncode != 0:
+        return {}, "netcdf_subprocess_schema_probe_failed:" + completed.stderr[-500:]
+    try:
+        return json.loads(completed.stdout), ""
+    except Exception as exc:
+        return {}, f"netcdf_subprocess_schema_probe_bad_json:{type(exc).__name__}:{exc}"
 
 
 def fits_schema(path: Path) -> tuple[dict[str, Any], list[str], list[str]]:

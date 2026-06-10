@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import platform
@@ -278,11 +279,32 @@ def environment_metadata(system: str, machine: str) -> dict[str, Any]:
         executable = shutil.which(name)
         if executable:
             python_candidates.append({"executable": executable, "version": python_version(executable)})
+    python_modules = {
+        name: python_module_available(name)
+        for name in (
+            "ezdxf",
+            "ifcopenshell",
+            "h5py",
+            "netCDF4",
+            "astropy",
+            "pyarrow",
+            "scipy",
+            "numpy",
+            "shapefile",
+            "pyproj",
+            "shapely",
+            "lief",
+            "pefile",
+            "macholib",
+        )
+    }
     return {
         "normalized_system": system,
         "architecture": normalize_architecture(machine),
         "machine": machine,
         "is_jetson": is_jetson(),
+        "python_modules": python_modules,
+        "libc": {"name": platform.libc_ver()[0], "version": platform.libc_ver()[1]},
         "nvidia": {
             "nvidia_smi": bool(shutil.which("nvidia-smi")),
             "nvcc": bool(shutil.which("nvcc")),
@@ -381,6 +403,7 @@ def build_tool_actions(
         llama_cpp_action(system, machine, tools_dir),
         radare2_action(system, machine, tools_dir),
         capa_action(system, machine, tools_dir),
+        ifcopenshell_action(system, machine, tools_dir),
     ]
     for action in actions:
         action.selected = selector_matches(action.id, selectors)
@@ -712,6 +735,78 @@ def find_capa_rules(tools_dir: Path) -> Path | None:
         if candidate.exists() and any(candidate.rglob("*.yml")):
             return candidate
     return None
+
+
+def ifcopenshell_action(system: str, machine: str, tools_dir: Path) -> SetupAction:
+    env_dir = tools_dir / "ifcopenshell-env"
+    environment = environment_metadata(system, machine)
+    current_available = python_module_available("ifcopenshell")
+    venv_python = external_venv_python(env_dir, system)
+    external_available = venv_python.exists() and external_python_module_available(venv_python, "ifcopenshell")
+    if current_available or external_available:
+        return SetupAction(
+            id="ifcopenshell",
+            category="tool",
+            name="IfcOpenShell",
+            status="satisfied",
+            detected_path=sys.executable if current_available else str(venv_python),
+            reason="IfcOpenShell Python module found",
+            installer="python_venv",
+            metadata={"external_python": None if current_available else str(venv_python)},
+        )
+    if venv_python.exists():
+        return SetupAction(
+            id="ifcopenshell",
+            category="tool",
+            name="IfcOpenShell",
+            status="optional",
+            detected_path=str(venv_python),
+            reason="IfcOpenShell external env exists but import failed; built-in IFC text schema remains available",
+            installer="python_venv",
+            safe_to_run=False,
+            notes=["IfcOpenShell is optional for richer BIM geometry; all2text still parses IFC entity schema safely without it."],
+            metadata={"external_python": str(venv_python), "import_available": False},
+        )
+    python = sys.executable if sys.version_info >= (3, 10) else select_external_python(environment)
+    blockers: list[str] = []
+    if not python:
+        blockers.append("IfcOpenShell requires a newer Python environment and no Python 3.10/3.11 interpreter was detected")
+    arch = str(environment.get("architecture") or "").lower()
+    libc_version = str((environment.get("libc") or {}).get("version") or "")
+    if system.startswith("linux") and arch in {"aarch64", "arm64"} and version_tuple(libc_version) < (2, 32):
+        return SetupAction(
+            id="ifcopenshell",
+            category="tool",
+            name="IfcOpenShell",
+            status="optional",
+            reason="IfcOpenShell ARM64 wheels require a newer glibc on this Jetson; built-in IFC text schema is used instead",
+            installer="python_venv",
+            safe_to_run=False,
+            notes=["Use a container/newer OS if IfcOpenShell geometry extraction is required."],
+            metadata={"architecture": arch, "glibc": libc_version, "fallback": "built_in_ifc_text_schema"},
+        )
+    commands = [
+        [python or "python3.11", "-m", "venv", str(env_dir)],
+        [str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
+        [str(venv_python), "-m", "pip", "install", "--only-binary=:all:", "ifcopenshell"],
+    ]
+    return SetupAction(
+        id="ifcopenshell",
+        category="tool",
+        name="IfcOpenShell",
+        status="blocked" if blockers else "installable",
+        reason="IfcOpenShell Python module not found",
+        target_path=str(env_dir),
+        installer="python_venv",
+        safe_to_run=not blockers,
+        blockers=blockers,
+        commands=commands,
+        user_commands=[" ".join(command) for command in commands],
+        approx_size="about 40 MB wheel plus Python virtualenv",
+        time_note="usually a few minutes when a wheel exists for this architecture",
+        confirmation="safe_user_space",
+        metadata={"python": python, "machine": machine, "python_candidates": environment.get("python_candidates")},
+    )
 
 
 def build_model_actions(
@@ -1258,7 +1353,7 @@ def run_action(action: SetupAction, options: SetupOptions) -> dict[str, Any]:
             return install_huggingface_snapshot(action)
         if action.id.startswith("whisper_cpp_"):
             return install_whisper_cpp_model(action)
-        if action.id == "capa":
+        if action.id in {"capa", "ifcopenshell"}:
             return run_commands(action)
         if action.installer == "external_env_or_service" and action.commands:
             return run_commands(action)

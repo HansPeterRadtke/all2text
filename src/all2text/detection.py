@@ -314,8 +314,12 @@ def _is_textual(
         return True
     if rough_category == "geospatial":
         return concrete_format.upper() in {"GEOJSON", "KML"} and bool(metadata.get("looks_text"))
-    if rough_category == "cad_or_technical" and metadata.get("looks_text"):
-        return concrete_format.upper() in {"DXF", "STEP", "STP", "STL", "OBJ", "IGES"}
+    if rough_category == "cad_or_technical":
+        cad_format = concrete_format.upper()
+        if cad_format == "IFC":
+            return True
+        if metadata.get("looks_text"):
+            return cad_format in {"DXF", "STEP", "STP", "STL", "OBJ", "IGES"}
     if rough_category == "email" and concrete_format.upper() in {"EML", "MBOX"} and metadata.get("looks_text"):
         return False
     return bool(content_signature.rough_category == "text" and metadata.get("looks_text"))
