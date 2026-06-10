@@ -282,7 +282,71 @@ def media_profile(
         python_metadata,
         path=path,
     )
+    profile["rough_content"] = media_rough_content(classification, profile, ffprobe_metadata, python_metadata)
+    profile["classification_note"] = (
+        "Coarse deterministic content label is always produced from streams, tags, headers, and simple waveform statistics; "
+        "detailed speech, music, scene, and object understanding requires configured providers."
+    )
     return profile
+
+
+def media_rough_content(
+    classification: Classification,
+    profile: dict[str, Any],
+    ffprobe_metadata: dict[str, object] | None,
+    python_metadata: dict[str, object] | None,
+) -> dict[str, Any]:
+    audio_kind = profile.get("audio_kind") if isinstance(profile.get("audio_kind"), dict) else {}
+    audio_label = str(audio_kind.get("kind") or "unknown_audio_content")
+    audio_confidence = str(audio_kind.get("confidence") or "low")
+    evidence = list(audio_kind.get("evidence") or [])
+    audio_count = int(profile.get("audio_stream_count") or 0)
+    video_count = int(profile.get("video_stream_count") or 0)
+    duration = profile.get("duration_seconds")
+    tag_kind = audio_kind_from_tags(ffprobe_metadata, python_metadata)
+    if tag_kind and "metadata_tags" not in evidence:
+        evidence.append("metadata_tags")
+    if duration is not None:
+        evidence.append(f"duration_seconds:{duration}")
+    if classification.rough_category == "audio":
+        mapping = {
+            "silence": ("audio_silence", "high"),
+            "very_short": ("audio_very_short", "medium"),
+            "speech_unknown": ("audio_speech_or_voice", audio_confidence),
+            "music_unknown": ("audio_music_or_stereo_content", audio_confidence),
+            "mixed_unknown": ("audio_mixed_or_complex", audio_confidence),
+            "no_audio_stream": ("audio_file_without_audio_stream", "high"),
+        }
+        kind, confidence = mapping.get(audio_label, ("audio_unknown_content", "low"))
+    elif classification.rough_category == "video":
+        coarse = str(profile.get("coarse_classification") or "")
+        if coarse == "visual_only_video":
+            kind, confidence = "video_visual_only_or_silent", "medium"
+        elif video_count <= 0 and audio_count > 0:
+            kind, confidence = "video_container_with_audio_only", "medium"
+        elif video_count > 0 and audio_count <= 0:
+            kind, confidence = "video_visual_only_or_silent", "medium"
+        elif audio_label == "speech_unknown":
+            kind, confidence = "video_with_speech_or_voice", audio_confidence
+        elif audio_label == "music_unknown":
+            kind, confidence = "video_with_music_or_stereo_audio", audio_confidence
+        elif audio_label == "silence":
+            kind, confidence = "video_with_silent_or_near_silent_audio", "medium"
+        elif audio_count > 0 and video_count > 0:
+            kind, confidence = "video_with_audio", "low"
+        else:
+            kind, confidence = "video_unknown_visual_content", "low"
+        evidence.extend([f"audio_stream_count:{audio_count}", f"video_stream_count:{video_count}"])
+    else:
+        kind, confidence = "media_unknown_content", "low"
+    return {
+        "kind": kind,
+        "confidence": confidence,
+        "source": "deterministic_stream_tags_waveform",
+        "evidence": sorted(set(str(item) for item in evidence if item)),
+        "audio_kind": audio_kind,
+        "limits": "Coarse media-content label only; full transcription, music recognition, scene recognition, and object recognition require configured providers.",
+    }
 
 
 def deterministic_audio_kind(
@@ -305,12 +369,6 @@ def deterministic_audio_kind(
         duration_value = None
     if audio_count <= 0:
         return {"kind": "no_audio_stream", "confidence": "high", "evidence": ["audio_stream_count:0"]}
-    if duration_value is not None and duration_value < 0.5:
-        return {
-            "kind": "very_short",
-            "confidence": "medium",
-            "evidence": [f"duration_seconds:{duration_value}"],
-        }
     wav_stats = wav_audio_stats(path) if path is not None and classification.concrete_format.upper() == "WAV" else None
     if wav_stats:
         evidence.append("wav_stats_available")
@@ -321,11 +379,11 @@ def deterministic_audio_kind(
                 "evidence": [*evidence, f"rms_normalized:{wav_stats.get('rms_normalized')}"],
                 "waveform": wav_stats,
             }
-    if video_count and audio_count:
+    if duration_value is not None and duration_value < 0.5:
         return {
-            "kind": "mixed_unknown",
-            "confidence": "low",
-            "evidence": [*evidence, f"audio_stream_count:{audio_count}", f"video_stream_count:{video_count}"],
+            "kind": "very_short",
+            "confidence": "medium",
+            "evidence": [*evidence, f"duration_seconds:{duration_value}"],
             **({"waveform": wav_stats} if wav_stats else {}),
         }
     tag_kind = audio_kind_from_tags(ffprobe_metadata, python_metadata)
@@ -334,6 +392,13 @@ def deterministic_audio_kind(
             "kind": tag_kind,
             "confidence": "low",
             "evidence": [*evidence, "metadata_tags"],
+            **({"waveform": wav_stats} if wav_stats else {}),
+        }
+    if video_count and audio_count:
+        return {
+            "kind": "mixed_unknown",
+            "confidence": "low",
+            "evidence": [*evidence, f"audio_stream_count:{audio_count}", f"video_stream_count:{video_count}"],
             **({"waveform": wav_stats} if wav_stats else {}),
         }
     channels = audio_channels(ffprobe_metadata, python_metadata)
@@ -479,11 +544,9 @@ def media_stages(
     audio_classifier_provider = effective_provider(cfg, "audio_classifier")
     diarization_provider = effective_provider(cfg, "diarization")
     frame_provider = effective_provider(cfg, "video_frames")
-    speech_likely = profile.get("coarse_classification") in {
-        "unknown_audio_content",
-        "mixed_audio_video",
-        "audio_only_container",
-    }
+    rough_content = profile.get("rough_content") if isinstance(profile.get("rough_content"), dict) else {}
+    audio_kind = profile.get("audio_kind") if isinstance(profile.get("audio_kind"), dict) else {}
+    speech_likely = rough_content.get("kind") in {"audio_speech_or_voice", "video_with_speech_or_voice"} or audio_kind.get("kind") == "speech_unknown"
     speech_auto = bool(speech_provider.get("auto_invoke", False))
     stages: dict[str, Any] = {
         "metadata": {
@@ -494,7 +557,8 @@ def media_stages(
         "coarse_classification": {
             "attempted": True,
             "label": profile.get("coarse_classification"),
-            "confidence": "low",
+            "rough_content": profile.get("rough_content"),
+            "confidence": (profile.get("rough_content") or {}).get("confidence") if isinstance(profile.get("rough_content"), dict) else "low",
             "limitation": profile.get("classification_note"),
         },
         "audio_kind_classification": audio_classifier_stage_plan(
@@ -1123,6 +1187,9 @@ def render_media_text(
         f"Format: {classification.concrete_format}",
         "Conversion: layered media metadata and provider-routing report.",
         f"Limitation: {limitation}",
+        "",
+        "Rough content:",
+        json.dumps(profile.get("rough_content") or {}, indent=2, ensure_ascii=False),
         "",
         "Media profile:",
         json.dumps(profile, indent=2, ensure_ascii=False),

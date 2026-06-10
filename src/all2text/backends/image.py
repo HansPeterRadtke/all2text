@@ -225,27 +225,67 @@ def image_profile(
         path=path,
     )
     chart_candidate = bool(profile.get("chart_candidate"))
+    profile_dict = {
+        "profile": profile.get("profile"),
+        "taxonomy": profile.get("taxonomy"),
+        "taxonomy_source": profile.get("taxonomy_source"),
+        "taxonomy_evidence": profile.get("taxonomy_evidence"),
+        "source_hint_taxonomy": profile.get("source_hint_taxonomy"),
+        "format": fmt,
+        "dimensions": {"width": width, "height": height},
+        "aspect_ratio": aspect,
+        "mode": mode,
+        "dominant_color_names": dominant,
+        "non_white_ratio": round(non_white_ratio, 4) if isinstance(non_white_ratio, float) else None,
+        "color_count_estimate": color_count_estimate,
+        "structure": structure,
+        "chart_candidate": chart_candidate,
+        "profile_source": "deterministic_header_pil_sampling" if pil_image is not None else "deterministic_header_only",
+    }
+    profile_dict["rough_content"] = image_rough_content(profile_dict)
     return (
-        {
-            "profile": profile.get("profile"),
-            "taxonomy": profile.get("taxonomy"),
-            "taxonomy_source": profile.get("taxonomy_source"),
-            "taxonomy_evidence": profile.get("taxonomy_evidence"),
-            "source_hint_taxonomy": profile.get("source_hint_taxonomy"),
-            "format": fmt,
-            "dimensions": {"width": width, "height": height},
-            "aspect_ratio": aspect,
-            "mode": mode,
-            "dominant_color_names": dominant,
-            "non_white_ratio": round(non_white_ratio, 4) if isinstance(non_white_ratio, float) else None,
-            "color_count_estimate": color_count_estimate,
-            "structure": structure,
-            "chart_candidate": chart_candidate,
-            "profile_source": "deterministic_header_pil_sampling" if pil_image is not None else "deterministic_header_only",
-        },
+        profile_dict,
         warnings,
         pil_image,
     )
+
+
+def image_rough_content(profile: dict[str, Any]) -> dict[str, Any]:
+    taxonomy = str(profile.get("taxonomy") or "unknown")
+    taxonomy_source = str(profile.get("taxonomy_source") or "unknown")
+    evidence = list(profile.get("taxonomy_evidence") or [])
+    source_hint = profile.get("source_hint_taxonomy")
+    mapping = {
+        "photo_scene": ("image_photo_or_scene", "low"),
+        "screenshot_ui": ("image_screenshot_or_ui", "medium"),
+        "document_page": ("image_document_or_scan", "medium"),
+        "table_screenshot": ("image_table_or_spreadsheet", "medium"),
+        "chart_plot": ("image_chart_or_plot", "medium"),
+        "diagram_flowchart_uml_network": ("image_diagram_or_line_drawing", "medium"),
+        "circuit_schematic": ("image_circuit_or_schematic", "medium"),
+        "mechanical_technical_drawing": ("image_mechanical_or_technical_drawing", "medium"),
+        "architectural_floor_plan": ("image_floorplan_or_architectural_drawing", "medium"),
+        "map_plan_heatmap": ("image_map_plan_or_heatmap", "medium"),
+        "scientific_medical_image": ("image_scientific_or_medical", "low"),
+        "painting_illustration_art": ("image_illustration_or_art", "low"),
+        "abstract_texture": ("image_abstract_or_texture", "low"),
+        "logo_icon": ("image_logo_or_icon", "medium"),
+        "unknown": ("image_unknown_visual_content", "low"),
+    }
+    label, confidence = mapping.get(taxonomy, ("image_unknown_visual_content", "low"))
+    if taxonomy_source == "default_low_confidence" and taxonomy == "photo_scene":
+        confidence = "low"
+        evidence = [*evidence, "default_photo_scene_when_no_specific_evidence"]
+    if source_hint and taxonomy_source == "weak_source_filename_hint":
+        evidence = [*evidence, f"filename_hint:{source_hint}"]
+    return {
+        "kind": label,
+        "taxonomy": taxonomy,
+        "confidence": confidence,
+        "source": taxonomy_source,
+        "evidence": evidence,
+        "limits": "Coarse deterministic image-content label only; detailed scene/object understanding requires OCR/VLM/chart providers.",
+    }
 
 
 def sampled_color_profile(image: Any) -> tuple[list[str], float, int]:
@@ -332,6 +372,15 @@ def classify_profile(
         color_count_estimate=color_count_estimate,
         structure=structure,
     )
+    if hint == "screenshot_ui" and taxonomy in {"diagram_flowchart_uml_network", "unknown"}:
+        return _profile_result(
+            "screenshot_ui",
+            "screenshot_ui",
+            "filename_hint_over_weak_linework",
+            [*evidence, "filename_hint:screenshot_ui"],
+            hint,
+            chart_candidate=False,
+        )
     if taxonomy != "unknown":
         return _profile_result(
             taxonomy,
@@ -417,6 +466,8 @@ def content_taxonomy_for(
             ]
     if width and height and width >= 1200 and height >= 700 and color_count_estimate and color_count_estimate < 512:
         return "screenshot_ui", [f"dimensions:{width}x{height}", f"color_count_estimate:{color_count_estimate}"]
+    if width and height and width >= 1000 and height >= 600 and (non_white_ratio or 0) < 0.25:
+        return "screenshot_ui", [f"dimensions:{width}x{height}", f"non_white_ratio:{non_white_ratio}"]
     if aspect and (aspect >= 2.2 or aspect <= 0.45) and color_count_estimate and color_count_estimate < 128:
         return "diagram_flowchart_uml_network", [f"aspect_ratio:{aspect}", f"color_count_estimate:{color_count_estimate}"]
     if non_white_ratio is not None and non_white_ratio < 0.015:
@@ -669,6 +720,7 @@ def render_image_analysis(
         f"- {image_metadata or {}}",
         "",
         "Image profile:",
+        f"- rough_content: {profile.get('rough_content')}",
         f"- profile: {profile.get('profile')}",
         f"- taxonomy: {profile.get('taxonomy')}",
         f"- taxonomy_source: {profile.get('taxonomy_source')}",
