@@ -1,0 +1,5 @@
+ISO-10303-21;
+DATA;
+#1=IFCPROJECT('x',$,'Project',$,$,$,$,$,$);
+ENDSEC;
+END-ISO-10303-21;

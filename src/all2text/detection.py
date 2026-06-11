@@ -257,8 +257,23 @@ def _choose_layer(
 ) -> LayerEvidence:
     if content_signature.rough_category and content_signature.confidence == "strong":
         return content_signature
+    if (
+        content_signature.rough_category == "text"
+        and content_signature.confidence == "medium"
+        and metadata.get("looks_text")
+        and extension_hint.rough_category
+        and extension_hint.rough_category not in SPECIALIST_EXTENSION_CATEGORIES
+        and extension_hint.rough_category not in TEXTUAL_CATEGORIES
+    ):
+        return content_signature
     if _mime_conflicts_with_specialist_extension(extension_hint, mime_hint):
         return extension_hint
+    if (
+        content_signature.rough_category
+        and content_signature.rough_category != "text"
+        and _specific_evidence(content_signature)
+    ):
+        return content_signature
     if mime_hint.rough_category and mime_hint.confidence in {"strong", "medium"} and _specific_evidence(mime_hint):
         return mime_hint
     if content_signature.rough_category and _specific_evidence(content_signature):
@@ -398,6 +413,16 @@ def _binary_signature(path: Path, header: bytes, options: RunOptions) -> LayerEv
         return _signature("content", "scientific_data", "Parquet", "strong", "magic:Parquet")
     if header[:6] == b"SIMPLE":
         return _signature("content", "scientific_data", "FITS", "strong", "magic:FITS")
+    if header.startswith(b"\x93NUMPY"):
+        return _signature("content", "scientific_data", "NumPy NPY", "strong", "magic:NPY")
+    if header.startswith(b"wOF2"):
+        return _signature("content", "font", "WOFF2", "strong", "magic:WOFF2")
+    if header.startswith(b"wOFF"):
+        return _signature("content", "font", "WOFF", "strong", "magic:WOFF")
+    if header.startswith(b"OTTO"):
+        return _signature("content", "font", "OpenType", "strong", "magic:OTF")
+    if header.startswith(b"\x00\x01\x00\x00"):
+        return _signature("content", "font", "TrueType", "strong", "magic:TTF")
     if header.startswith(b"\x7fELF"):
         return _signature("content", "executable_or_binary", "ELF executable/shared object", "strong", "magic:ELF")
     if header.startswith(b"MZ"):
