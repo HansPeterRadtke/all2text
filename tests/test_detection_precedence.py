@@ -41,11 +41,14 @@ def test_specialist_extensions_are_not_overridden_by_misleading_image_mime(
 
     assert classification.rough_category in {"cad_or_technical", "scientific_data"}
     assert classification.concrete_format == expected_format
-    assert "layer2_mime_conflict_ignored_for_specialist_extension" in classification.evidence
-    assert any(
-        "mime_conflicts_with_specialist_extension" in warning
-        for warning in classification.warnings
-    )
+    if "layer2_content_signature_override" in classification.evidence:
+        assert classification.content_signature.concrete_format == expected_format
+    else:
+        assert "layer2_mime_conflict_ignored_for_specialist_extension" in classification.evidence
+        assert any(
+            "mime_conflicts_with_specialist_extension" in warning
+            for warning in classification.warnings
+        )
 
 
 @pytest.mark.parametrize(

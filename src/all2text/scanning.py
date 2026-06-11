@@ -1,9 +1,47 @@
 from __future__ import annotations
 
+import fnmatch
 import os
 from pathlib import Path
 
 from all2text.models import TreeEntry
+
+
+DEFAULT_EXCLUDED_DIR_NAMES = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".tox",
+        ".nox",
+        ".venv",
+        "venv",
+        "env",
+        "node_modules",
+        "build",
+        "dist",
+        ".eggs",
+    }
+)
+
+DEFAULT_EXCLUDED_FILE_GLOBS = (
+    "*.pyc",
+    "*.pyo",
+    "*.class",
+    ".DS_Store",
+    "Thumbs.db",
+)
+
+
+def is_default_excluded(path: Path, *, is_dir: bool) -> bool:
+    name = path.name
+    if is_dir and name in DEFAULT_EXCLUDED_DIR_NAMES:
+        return True
+    return any(fnmatch.fnmatchcase(name, pattern) for pattern in DEFAULT_EXCLUDED_FILE_GLOBS)
 
 
 def scan_source_tree(source_root: Path) -> list[TreeEntry]:
@@ -56,6 +94,8 @@ def scan_source_tree(source_root: Path) -> list[TreeEntry]:
                     )
                     continue
                 if child.is_dir(follow_symlinks=False):
+                    if is_default_excluded(path, is_dir=True):
+                        continue
                     entry = TreeEntry(path, child_rel, "directory")
                     entries.append(entry)
                     if already_seen_directory(path):
@@ -64,6 +104,8 @@ def scan_source_tree(source_root: Path) -> list[TreeEntry]:
                     walk(path, child_rel)
                     continue
                 if child.is_file(follow_symlinks=False):
+                    if is_default_excluded(path, is_dir=False):
+                        continue
                     entries.append(TreeEntry(path, child_rel, "file"))
                     continue
                 entries.append(TreeEntry(path, child_rel, "other"))
@@ -74,4 +116,3 @@ def scan_source_tree(source_root: Path) -> list[TreeEntry]:
 
     walk(source_root, Path("."))
     return entries
-

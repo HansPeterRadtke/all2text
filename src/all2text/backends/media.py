@@ -367,8 +367,6 @@ def deterministic_audio_kind(
         duration_value = float(duration) if duration is not None else None
     except (TypeError, ValueError):
         duration_value = None
-    if audio_count <= 0:
-        return {"kind": "no_audio_stream", "confidence": "high", "evidence": ["audio_stream_count:0"]}
     wav_stats = wav_audio_stats(path) if path is not None and classification.concrete_format.upper() == "WAV" else None
     if wav_stats:
         evidence.append("wav_stats_available")
@@ -379,6 +377,11 @@ def deterministic_audio_kind(
                 "evidence": [*evidence, f"rms_normalized:{wav_stats.get('rms_normalized')}"],
                 "waveform": wav_stats,
             }
+    if audio_count <= 0 and not (wav_stats and wav_stats.get("available")):
+        return {"kind": "no_audio_stream", "confidence": "high", "evidence": ["audio_stream_count:0"]}
+    if audio_count <= 0 and wav_stats and wav_stats.get("available"):
+        audio_count = int(wav_stats.get("channels") or 1)
+        evidence.append("audio_stream_inferred_from_wav_header")
     if duration_value is not None and duration_value < 0.5:
         return {
             "kind": "very_short",

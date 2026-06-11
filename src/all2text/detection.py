@@ -449,6 +449,9 @@ def _zip_signature(path: Path, options: RunOptions) -> LayerEvidence | None:
 def _textual_signature(path: Path, text: str) -> LayerEvidence | None:
     stripped = text.lstrip("\ufeff \t\r\n")
     lowered = stripped[:1024].casefold()
+    technical = _technical_text_signature(stripped)
+    if technical is not None:
+        return technical
     if stripped.startswith("{") or stripped.startswith("["):
         parsed = _try_json_parse(path)
         if isinstance(parsed, dict) and "cells" in parsed and "nbformat" in parsed:
@@ -479,6 +482,22 @@ def _textual_signature(path: Path, text: str) -> LayerEvidence | None:
     if path.suffix.casefold() in {".dxf", ".step", ".stp", ".stl", ".obj", ".iges", ".igs"}:
         category, fmt = EXTENSION_HINTS[path.suffix.casefold()]
         return _signature("content", category, fmt, "medium", "technical_text_extension_with_printable_content")
+    return None
+
+
+def _technical_text_signature(stripped: str) -> LayerEvidence | None:
+    upper = stripped[:4096].upper()
+    lowered = stripped[:4096].casefold()
+    if "ISO-10303-21" in upper and "IFC" in upper:
+        return _signature("content", "cad_or_technical", "IFC", "strong", "ifc_step_text_signature")
+    if re.search(r"(?m)^\s*#\d+\s*=\s*IFC[A-Z0-9_]*\s*\(", upper):
+        return _signature("content", "cad_or_technical", "IFC", "strong", "ifc_entity_text_signature")
+    if "ISO-10303-21" in upper:
+        return _signature("content", "cad_or_technical", "STEP", "strong", "step_text_signature")
+    if re.search(r"(?m)^\s*0\s*\n\s*SECTION\s*$", stripped) and re.search(r"(?m)^\s*0\s*\n\s*EOF\s*$", stripped):
+        return _signature("content", "cad_or_technical", "DXF", "strong", "dxf_group_code_signature")
+    if lowered.lstrip().startswith("solid ") and "endsolid" in lowered:
+        return _signature("content", "cad_or_technical", "STL", "medium", "ascii_stl_text_signature")
     return None
 
 
