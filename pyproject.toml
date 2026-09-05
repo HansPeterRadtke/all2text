@@ -79,6 +79,7 @@ Issues = "https://github.com/HansPeterRadtke/all2text/issues"
 
 [project.scripts]
 all2text = "all2text.cli:main"
+all2text-mcp = "all2text.mcp_server:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

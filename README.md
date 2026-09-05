@@ -326,3 +326,8 @@ Document extras constrain lxml on older supported Python runtimes to avoid forci
 Some source-build-heavy PyPI packages are guarded by Python-version markers on older runtimes so the advertised install command does not require system compiler headers or native development libraries.
 
 A normal user does not need dependency extras. From a cloned repository, run `python -m pip install .`; after a future PyPI release, run `python -m pip install all2text`. Source installs invoke the setup hook when pip runs the build backend; wheel installs cannot run arbitrary postinstall code, so `all2text setup` remains the manual rerun. Use `all2text doctor` to inspect detection and `all2text install-tools` for OS-aware external-tool guidance.
+
+
+## MCP server
+
+all2text can also run as a local MCP 2026-07-28 tool server without changing the normal CLI. `all2text-mcp` (or `python -m all2text.mcp_server`) speaks newline-delimited MCP JSON-RPC over stdio and exposes `all2text_capabilities` and `all2text_convert`. The MCP layer deliberately delegates to the normal all2text CLI, so provider detection, OCR, document parsing, speech/model integrations, filesystem access, configuration, and manifests remain owned by all2text rather than by the consuming agent runtime.
