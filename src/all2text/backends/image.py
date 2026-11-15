@@ -17,6 +17,9 @@ from all2text.providers import (
 )
 from all2text.utils import read_header
 from all2text.visual_prompt import visual_prompt, verified_image_context
+from all2text.clip_routing import (
+    maybe_classify_local_clip, ROUTE_TAXONOMY,
+)
 
 
 class ImageAnalysisBackend:
@@ -81,6 +84,41 @@ class ImageAnalysisBackend:
             except (ValueError,OSError) as error:
                 source_context_state={"status":"rejected_context_source_identity"}
                 warnings.append(f"visual_context_rejected:{type(error).__name__}:{error}")
+        classifier_provider = effective_provider(cfg, "image_classifier")
+        region_role = (source_context or {}).get("region_role", "standalone_image")
+        clip_result = maybe_classify_local_clip(
+            pil_image, provider=classifier_provider,
+            allow_models=ctx.options.allow_local_models,
+            region_role=region_role,
+        )
+        if clip_result.get("used"):
+            methods.append("offline_clip_zero_shot_routing")
+            profile["deterministic_taxonomy_before_clip"] = profile.get("taxonomy")
+            candidate = clip_result["accepted_route_class"]
+            profile["learned_candidate"] = clip_result["category_candidate"]
+            if candidate == "uncertain":
+                profile["taxonomy"] = "unknown"
+                profile["taxonomy_source"] = "clip_uncertain_abstention"
+                profile["chart_candidate"] = False
+                warnings.append("clip_uncertain:require specialist review or local VLM")
+            else:
+                profile["taxonomy"] = ROUTE_TAXONOMY[candidate]
+                profile["taxonomy_source"] = "clip_offline_local_uncalibrated"
+                profile["chart_candidate"] = candidate == "chart"
+                if candidate in {"photo", "render"}:
+                    warnings.append("clip_photo_or_render_label_is_not_authenticity_proof")
+        elif (classifier_provider.enabled and classifier_provider.name == "clip"
+              and classifier_provider.get("auto_invoke", False)
+              and ctx.options.allow_local_models
+              and region_role != "full_document_page"):
+            # An explicitly requested classifier that failed must not
+            # silently trigger a specialist chart parser through the much
+            # weaker color/line detector.
+            profile["deterministic_taxonomy_before_clip"] = profile.get("taxonomy")
+            profile["taxonomy"] = "unknown"
+            profile["taxonomy_source"] = "clip_failed_abstention"
+            profile["chart_candidate"] = False
+            warnings.append(str(clip_result.get("reason", "clip_failed")))
         ocr_provider = provider_with_tool_path(
             effective_provider(cfg, "ocr"),
             "tesseract_cmd",
@@ -160,6 +198,7 @@ class ImageAnalysisBackend:
                 "image": image_metadata,
                 "profile": profile,
                 "source_context_evidence": source_context_state,
+                "image_classifier": clip_result,
                 "provider_statuses": [status.to_dict() for status in statuses],
                 "route": route.to_dict(),
                 "ocr": ocr_result,

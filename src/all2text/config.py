@@ -309,6 +309,7 @@ PROVIDER_POSITIVE_INT_PARAMS: dict[str, set[str]] = {
 }
 
 PROVIDER_POSITIVE_FLOAT_PARAMS: dict[str, set[str]] = {
+    "image_classifier": {"minimum_margin"},
     "vlm": {"discovery_timeout_seconds"},
     "llm_text": {"discovery_timeout_seconds"},
     "video_frames": {"interval_seconds"},
@@ -349,6 +350,7 @@ DEFAULT_PROVIDERS: dict[str, ProviderConfig] = {
             "model_path": "",
             "labels": "default",
             "timeout_seconds": 120,
+            "minimum_margin": 0.02,
             "auto_invoke": False,
         },
     ),

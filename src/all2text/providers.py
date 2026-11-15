@@ -393,6 +393,22 @@ def configured_candidate_status(
     elif not enabled:
         error = f"{name} provider disabled by config"
         available = False
+    elif name == "image_classifier" and provider.name == "clip":
+        # Distinguish actual locally runnable CLIP weights from the
+        # registry's speculative future models. No model is loaded here.
+        import importlib.util
+        from pathlib import Path
+        model_dir = Path(str(provider.get("model_path", "")))
+        deps = all(importlib.util.find_spec(mod) is not None
+                   for mod in ("torch", "transformers", "PIL"))
+        local_files = (
+            model_dir.is_dir() and not model_dir.is_symlink()
+            and (model_dir/"config.json").is_file()
+            and any((model_dir/file).is_file()
+                    for file in ("model.safetensors", "pytorch_model.bin"))
+        )
+        available = deps and local_files
+        error = None if available else "offline CLIP modules or local model files missing"
     else:
         candidate = next((item for item in PROVIDER_CANDIDATES if item.name == provider.name), None)
         if candidate is None:
@@ -457,6 +473,9 @@ def plan_image_route(
             providers.append("document_intelligence")
     elif family in {"diagram", "screenshot"}:
         primary_route = "technical_image_ocr_vlm_or_metadata"
+    elif family == "unknown":
+        primary_route = "uncertain_image_needs_visual_review_or_vlm"
+        fallback_reasons.append("learned image classifier abstained; do not route chart specialist")
     else:
         primary_route = "image_metadata_vlm_optional"
 
@@ -480,6 +499,9 @@ def plan_image_route(
 
 
 def image_family(image_profile: dict[str, Any], *, chart_candidate: bool) -> str:
+    if image_profile.get("taxonomy_source") in (
+            "clip_uncertain_abstention", "clip_failed_abstention"):
+        return "unknown"
     taxonomy = str(image_profile.get("taxonomy") or "").lower()
     if taxonomy == "chart_plot" or chart_candidate:
         return "chart"

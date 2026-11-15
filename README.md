@@ -344,3 +344,17 @@ still requires independent upstream publisher/source verification. Model calls
 are disabled unless the existing provider auto_invoke flag is enabled.
 See docs/visual_context_pipeline_20261115.md for full details, tests and
 the follow-on model/diagram benchmark plan.
+
+### Optional offline CLIP image classifier
+
+The previously advertised image_classifier provider has an optional
+local CLIP ViT-B/32 CPU adapter. It is disabled by default and requires
+a model-capable run profile, enabled=true, auto_invoke=true and
+model_path set to a preexisting local model directory. The output
+records source classification, model/config/prompt hashes, cosine
+separation and uncertainty. Low-confidence candidates and unavailable
+models abstain rather than blindly activating chart extraction.
+Document pages with a verified external SHA-pinned full-page role
+must first go through document layout. This does not perform OCR,
+extract chart values or certify that an image is a photograph.
+See docs/offline_clip_technical_figure_routing_20261115.md.
