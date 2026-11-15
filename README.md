@@ -358,3 +358,15 @@ Document pages with a verified external SHA-pinned full-page role
 must first go through document layout. This does not perform OCR,
 extract chart values or certify that an image is a photograph.
 See docs/offline_clip_technical_figure_routing_20261115.md.
+
+### Optional offline chart-to-table candidate after confirmed CLIP chart
+
+The local chart provider name deplot can be enabled separately,
+with existing local safetensors weights, explicit local font_path,
+auto_invoke=true and a model-capable profile. DePlot does not run
+unless the learned image classifier actually accepted a chart with
+adequate margin and the image is not a verified whole PDF page.
+No automatic model/font downloads or network requests are used.
+Model-generated numeric tables are marked unverified until checked
+against primary source data; see the detailed offline CLIP/DePlot
+routing report for the synthetic two-chart test and limitations.

@@ -738,13 +738,25 @@ def chart_status(provider: ProviderConfig, *, configured: ProviderConfig, profil
         error = f"chart specialist disabled by profile:{profile}"
     elif not enabled:
         error = "chart specialist disabled by config"
-    elif provider.name in {"deplot", "chartgemma", "unichart", "chartcoder", "chartocr"}:
+    elif provider.name == "deplot":
+        from pathlib import Path
         path = Path(model_path)
-        available = path.exists() and any((path / filename).exists() for filename in ("config.json", "model.safetensors", "pytorch_model.bin"))
-        error = None if available else f"chart model files not found at {path}"
-        if available:
-            error = f"{provider.name} execution adapter is not implemented in all2text core yet"
-            available = False
+        font = Path(str(provider.get("font_path", "")))
+        files = (
+            path.is_dir() and not path.is_symlink()
+            and (path/"config.json").is_file()
+            and (path/"model.safetensors").is_file()
+            and not (path/"model.safetensors").is_symlink()
+        )
+        font_ready = (font.is_file() and not font.is_symlink()
+                      and font.suffix.casefold() in (".ttf", ".otf"))
+        deps = all(importlib.util.find_spec(name) is not None
+                   for name in ("torch","transformers","PIL"))
+        available=files and font_ready and deps
+        error=None if available else "offline DePlot requires local model, explicit local font and Python dependencies"
+    elif provider.name in {"chartgemma", "unichart", "chartcoder", "chartocr"}:
+        error=f"{provider.name} execution adapter is not implemented in all2text core yet"
+        available=False
     else:
         error = f"chart provider is not implemented in all2text core: {provider.name}"
     return ProviderStatus(
@@ -760,6 +772,8 @@ def chart_status(provider: ProviderConfig, *, configured: ProviderConfig, profil
             "effective_enabled": enabled,
             "profile": profile,
             "embedded_images_enabled": bool(provider.get("embedded_images_enabled", False)),
+            "font_path": str(provider.get("font_path", "")),
+            "auto_invoke": bool(provider.get("auto_invoke", False)),
         },
         lifecycle=provider_lifecycle(
             configured=configured.enabled or configured.name != "none",

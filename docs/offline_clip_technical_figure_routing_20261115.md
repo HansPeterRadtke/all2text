@@ -108,3 +108,74 @@ figure-type decision aid, not a text/diagram extractor.
 The optional setup test test_capa_uses_detected_newer_python is
 known to fail already on the untouched June 11 parent; the exact
 regression evidence and all new tests are preserved separately.
+
+## Follow-up: optional offline DePlot chart-to-table candidate
+
+The earlier RAG fixture model google/deplot was still present on Nitro.
+A first 2026-11-15 offline attempt failed even though the local DePlot
+model/processor/weights loaded successfully. The actual failure was in
+Pix2StructImageProcessor rendering its text header: by default it tried
+to download ybelkada/fonts Arial.TTF from Hugging Face. We reproduced
+the exact missing-font exception in a bounded local traceback. An
+explicit existing local LiberationSans-Regular.ttf prevents this
+automatic remote request, and both model loading and generation then
+succeeded in the offline, CPU-only environment.
+
+The two separate synthetic known-data plots were:
+- Quarterly Ticket Counts, Q1=10, Q2=20, Q3=30
+- Workshop Temperature, time 0=20C, 1=30C, 2=40C, 3=35C
+
+Direct DePlot generated exact titles, corresponding x/y columns, and
+all seven original category-value pairs. Each figure needed about
+22 seconds on Nitro CPU. These charts are simple and their source data
+was generated in the test; 7/7 exact pair matching does not establish
+accuracy on scientific papers, distorted plots, difficult axes, tiny
+legend labels or partial OCR.
+
+This branch now offers an explicit local chart specialist adapter
+for the already-declared chart provider name deplot. Required:
+- A model-capable run profile, chart.enabled=true,
+  chart.auto_invoke=true, and an absolute existing model_path
+  with safetensors weights.
+- Explicit absolute local font_path to a TTF/OTF, never a default
+  Hub font download. DePlot output records the font and model SHA.
+- A genuinely used and confidently accepted CLIP classifier chart
+  decision. Weak image geometry, a tiny CLIP margin, an unavailable
+  CLIP model, an unrelated diagram or a complete original PDF page
+  are insufficient to invoke numeric extraction.
+- CPU inference, one cached model per process, bounded image size and
+  generated token count; the optional adapter is disabled by default.
+
+The generated table is always marked UNVERIFIED MODEL-GENERATED
+CHART-TO-TABLE CANDIDATE in text and converter metadata. The
+numeric_values_verified field stays false, even if the table looks
+plausible or the model's output includes a polished explanation.
+No chart values are promoted as verified FileDB facts automatically.
+The independent two-chart test compares the candidate output against
+known source data and confirms all seven values; this test evidence
+does not carry over to unverified future images.
+
+Example additional opt-in configuration:
+
+    [providers.chart]
+    name = "deplot"
+    enabled = true
+    auto_invoke = true
+    model_path = "/data/models/rag_tests/vision/google_deplot"
+    font_path = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+    max_tokens = 160
+    max_image_side = 700
+
+The private reproducibility folder contains the source-data figures,
+original data, SHA checks, the first font failure and traceback,
+corrected direct DePlot output, integrated All2Text manifests, a strict
+row-by-row comparison and regression log:
+/data/var/knowmoredirt-clip-visual-route-20261115
+
+Do not enable batch chart extraction on the 94.5GiB library yet.
+First run independent numeric holdouts, validate figure segmentation,
+supply parent original PDF SHA/page/bounding box/caption, and measure
+precision, numerical errors and hallucinations against primary data.
+The adapter's generation is synchronous and not an isolated
+service with an enforced wall-clock timeout; a production deployment
+requires a timeout-bounded worker and resource broker reservation.

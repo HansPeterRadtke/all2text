@@ -295,7 +295,7 @@ PROVIDER_POSITIVE_INT_PARAMS: dict[str, set[str]] = {
     "audio_classifier": {"timeout_seconds"},
     "binary_metadata": {"timeout_seconds", "max_strings"},
     "cad": {"timeout_seconds"},
-    "chart": {"timeout_seconds"},
+    "chart": {"timeout_seconds", "max_tokens", "max_image_side"},
     "diarization": {"timeout_seconds"},
     "geospatial": {"timeout_seconds"},
     "image_classifier": {"timeout_seconds"},
@@ -403,6 +403,9 @@ DEFAULT_PROVIDERS: dict[str, ProviderConfig] = {
         params={
             "specialist": "none",
             "model_path": "",
+            "font_path": "",
+            "max_tokens": 160,
+            "max_image_side": 700,
             "embedded_images_enabled": False,
             "confidence_threshold": 0.6,
             "timeout_seconds": 120,
