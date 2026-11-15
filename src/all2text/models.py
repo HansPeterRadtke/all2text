@@ -102,6 +102,9 @@ class ConversionContext:
     target_root: Path
     options: RunOptions
     config: Any | None = None
+    # Optional checked per-image topic/section context, indexed by the input
+    # tree's relative path. No implicit search for sidecars or model installs.
+    source_context_map: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass

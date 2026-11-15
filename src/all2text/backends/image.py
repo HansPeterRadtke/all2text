@@ -16,6 +16,7 @@ from all2text.providers import (
     provider_statuses,
 )
 from all2text.utils import read_header
+from all2text.visual_prompt import visual_prompt, verified_image_context
 
 
 class ImageAnalysisBackend:
@@ -50,6 +51,36 @@ class ImageAnalysisBackend:
 
         warnings = list(profile_warnings)
         methods = ["image_magic_metadata", "deterministic_image_profile", "provider_status_routing"]
+        source_context = None
+        source_context_state = {"status":"not_supplied"}
+        selected = ctx.source_context_map.get(rel_path.as_posix())
+        if selected is not None:
+            try:
+                source_context=verified_image_context(path,selected)
+                from hashlib import sha256
+                import json
+                # The checksum of the *supplied description* distinguishes
+                # different contextual revisions of the same raster.
+                contextual_bytes=json.dumps(
+                    source_context,ensure_ascii=False,sort_keys=True,separators=(",",":")
+                ).encode("utf-8")
+                source_context_state={
+                    "status":"sha256_verified_image_context",
+                    "image_sha256":selected["image_sha256"],
+                    "context_sha256":sha256(contextual_bytes).hexdigest(),
+                    "region_role":source_context.get("region_role","unknown"),
+                    "provenance_scope":"raster_bytes_verified; document captions and topic supplied by configured operator, not independently publisher-authenticated",
+                }
+                # A known complete page is not an isolated chart region.
+                # Keep the faulty geometry guess for auditability.
+                if source_context.get("region_role")=="full_document_page":
+                    profile["deterministic_taxonomy_before_context"]=profile.get("taxonomy")
+                    profile["taxonomy"]="document_page"
+                    profile["taxonomy_source"]="sha256_verified_full_document_page_context"
+                    profile["chart_candidate"]=False
+            except (ValueError,OSError) as error:
+                source_context_state={"status":"rejected_context_source_identity"}
+                warnings.append(f"visual_context_rejected:{type(error).__name__}:{error}")
         ocr_provider = provider_with_tool_path(
             effective_provider(cfg, "ocr"),
             "tesseract_cmd",
@@ -74,6 +105,7 @@ class ImageAnalysisBackend:
             effective_provider(cfg, "vlm"),
             rel_path,
             profile,
+            source_context=source_context,
         )
         warnings.extend(vlm_warnings)
         vlm_used = bool(vlm_text)
@@ -127,6 +159,7 @@ class ImageAnalysisBackend:
             metadata={
                 "image": image_metadata,
                 "profile": profile,
+                "source_context_evidence": source_context_state,
                 "provider_statuses": [status.to_dict() for status in statuses],
                 "route": route.to_dict(),
                 "ocr": ocr_result,
@@ -681,6 +714,8 @@ def maybe_call_vlm(
     provider: Any,
     rel_path: Path,
     profile: dict[str, Any],
+    *,
+    source_context: dict[str, Any] | None = None,
 ) -> tuple[str | None, list[str], dict[str, Any]]:
     image_bytes = image_to_png_bytes(image) if image is not None else None
     mime_type = "image/png"
@@ -690,10 +725,8 @@ def maybe_call_vlm(
             mime_type = "image/svg+xml" if path.suffix.casefold() == ".svg" else "application/octet-stream"
         except Exception as exc:
             return None, [f"vlm_image_read_failed:{exc}"], {}
-    prompt = (
-        "Describe the image using only visible evidence. Report uncertainty. "
-        "If it is a chart, do not invent labels or values that are not visible. "
-        f"File label: {rel_path.as_posix()}. Deterministic profile: {profile.get('profile')}."
+    prompt = visual_prompt(
+        relative_path=rel_path, profile=profile, source_context=source_context,
     )
     return call_openai_compatible_vision(image_bytes, provider, prompt=prompt, mime_type=mime_type)
 

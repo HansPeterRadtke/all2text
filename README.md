@@ -326,3 +326,21 @@ Document extras constrain lxml on older supported Python runtimes to avoid forci
 Some source-build-heavy PyPI packages are guarded by Python-version markers on older runtimes so the advertised install command does not require system compiler headers or native development libraries.
 
 A normal user does not need dependency extras. From a cloned repository, run `python -m pip install .`; after a future PyPI release, run `python -m pip install all2text`. Source installs invoke the setup hook when pip runs the build backend; wheel installs cannot run arbitrary postinstall code, so `all2text setup` remains the manual rerun. Use `all2text doctor` to inspect detection and `all2text install-tools` for OS-aware external-tool guidance.
+
+## Optional context-linked visual descriptions
+
+Images can receive a locally supplied, source-relative context record
+instead of relying only on a generic description prompt. Set the
+modules.image.source_context_manifest parameter in a TOML config to an
+absolute path outside both source and target trees. The JSON must use schema
+all2text.visual_context.v1 and map image input relative paths to full
+image_sha256, region_role, physical_page, document_topic, section_heading,
+figure_caption and nearby_text. The full image checksum must match before
+the topic/caption is used; rejected context is reported without modifying
+the original. A known full_document_page is routed as document layout rather
+than as an isolated chart; the original geometric guess remains in metadata.
+Provenance is limited to the verified image bytes; supplied topic/caption
+still requires independent upstream publisher/source verification. Model calls
+are disabled unless the existing provider auto_invoke flag is enabled.
+See docs/visual_context_pipeline_20261115.md for full details, tests and
+the follow-on model/diagram benchmark plan.
