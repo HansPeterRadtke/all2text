@@ -509,6 +509,12 @@ def image_family(image_profile: dict[str, Any], *, chart_candidate: bool) -> str
         return "document"
     if taxonomy == "screenshot_ui":
         return "screenshot"
+    # A verified CLIP scene/render decision or an explicitly identified scene
+    # taxonomy must not be overturned by an older deterministic profile
+    # string such as "chart_like_lines". The accepted taxonomy outranks
+    # weak geometric fallback tags.
+    if taxonomy in {"photo_scene", "painting_illustration_art"}:
+        return "scene_or_photo"
     if taxonomy in {
         "diagram_flowchart_uml_network",
         "circuit_schematic",

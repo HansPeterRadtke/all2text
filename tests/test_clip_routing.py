@@ -140,6 +140,16 @@ class ImageBackendIntegrationPolicyTests(TestCase):
     def test_photo_label_not_authenticity_proof(self):
         row,_=self.convert(self.simulated("render"))
         self.assertIn("clip_photo_or_render_label_is_not_authenticity_proof",row["warnings"])
+        self.assertEqual("scene_or_photo",row["converter_metadata"]["route"]["family"])
+        self.assertFalse(row["converter_metadata"]["profile"]["chart_candidate"])
+
+    def test_accepted_render_never_falls_back_to_heuristic_chart_profile(self):
+        from all2text.providers import image_family
+        profile={"taxonomy":"photo_scene", "taxonomy_source":"clip_offline_local_uncalibrated",
+                 "profile":"chart_like_lines and high_color_ratio", "chart_candidate":False}
+        self.assertEqual("scene_or_photo",image_family(profile,chart_candidate=False))
+        profile["taxonomy"]="chart_plot"
+        self.assertEqual("chart",image_family(profile,chart_candidate=True))
 
     def test_default_no_classifier_preserves_prior_behavior(self):
         from all2text.config import ProviderConfig

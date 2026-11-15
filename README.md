@@ -370,3 +370,17 @@ No automatic model/font downloads or network requests are used.
 Model-generated numeric tables are marked unverified until checked
 against primary source data; see the detailed offline CLIP/DePlot
 routing report for the synthetic two-chart test and limitations.
+
+### Optional source-linked PDF figure crops
+
+The scripts/pdf_visual_regions.py command can produce small, private,
+SHA-linked region crops from approved completed PDFs. It records physical
+PDF pages, original and raster checksums, image rectangles in PDF points,
+crop bounds and nearby, explicitly heuristic extracted figure captions.
+Whole-page scanned bitmaps remain document pages instead of being
+mistaken for isolated charts. The generated visual_context.json can
+be used by All2Text with regions/ as the input tree. This stage only
+detects embedded raster figures; vector charts and page-layout
+semantics require a trained detector. It does not change originals
+or the KnowMoreDiRT database. Details:
+docs/source_verified_pdf_figure_regions_20261115.md
