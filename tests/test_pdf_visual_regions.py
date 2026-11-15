@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
+import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -124,7 +126,13 @@ except ImportError:
     REPORTLAB_AVAILABLE=False
 
 
-@unittest.skipUnless(REPORTLAB_AVAILABLE,"reportlab required for synthetic PDF visual fixture")
+@unittest.skipUnless(
+    REPORTLAB_AVAILABLE
+    and importlib.util.find_spec("pdfminer") is not None
+    and shutil.which("pdftoppm") is not None
+    and shutil.which("pdfinfo") is not None,
+    "synthetic PDF integration needs optional ReportLab, PDFMiner and Poppler",
+)
 class SourceBoundedEndToEndTests(OriginalRevisionUnitTests):
     def setUp(self):
         super().setUp()
