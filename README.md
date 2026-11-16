@@ -384,3 +384,28 @@ detects embedded raster figures; vector charts and page-layout
 semantics require a trained detector. It does not change originals
 or the KnowMoreDiRT database. Details:
 docs/source_verified_pdf_figure_regions_20261115.md
+
+### Bounded source-revision-verified OCR previews
+
+The optional scripts/source_pinned_scanned_ocr.py tool allows at most
+three physical pages of an already approved downloaded PDF whose
+canonical KnowMoreDiRT source-map explicitly marks it image-only and
+unextracted. It independently checks original SHA/size/receipt and
+read-only source-map SHA before running local, thread-bounded
+Tesseract on grayscale Poppler renders. It preserves original
+physical page, PDF rotation, raster/TSV/text/word-box hashes and
+the installed model data checksum, with explicit uncalibrated
+confidence and incomplete-source labels. Optional --compare-psm
+runs a second local page segmentation and flags differing reading
+order; it does not claim either text is correct. Existing source
+texts and native FileDB are untouched, and existing output folders
+are never replaced. See
+docs/source_pinned_scanned_pdf_ocr_20261116.md and
+scripts/benchmark_scanned_ocr_modes.py for measured tests and limits.
+
+The OCR preview also requires --filedb pointing to the existing KMD
+filesystem.sqlite3. It refuses ambiguous native original identities,
+and records the current original entry ID and chunk count without
+creating or altering an index. A high OCR confidence cannot validate
+reading order: the compare mode flags discrepancies but never
+accepts either transcript as primary-source truth.
