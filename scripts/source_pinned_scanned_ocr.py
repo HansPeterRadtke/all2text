@@ -20,6 +20,8 @@ def main()->None:
     p.add_argument("--psm",type=int,default=3)
     p.add_argument("--compare-psm",type=int,default=None,
                    help="Optional second page segmentation mode for source reading-order disagreement only")
+    p.add_argument("--propose-column-order",action="store_true",
+                   help="Create a separate unverified two-column text ordering candidate from word coordinates; never replace primary OCR")
     p.add_argument("--lang",default="eng")
     args=p.parse_args()
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"src"))
@@ -31,6 +33,7 @@ def main()->None:
         physical_pages=args.page,
         output_dir=args.output_dir,dpi=args.dpi,psm=args.psm,language=args.lang,
         comparison_psm=args.compare_psm,
+        propose_column_order=args.propose_column_order,
     )
     print(json.dumps({
         "source":report["source"]["relative_path"],
@@ -42,6 +45,9 @@ def main()->None:
         "ocr_candidates_unverified":True,
         "output_dir":str(args.output_dir),
         "ocr_stats":[p["ocr_stats"] for p in report["pages"]],
+        "unverified_column_order_candidates":[
+            p["unverified_column_order_candidate"] for p in report["pages"]
+        ],
         "comparison_mode_disagreements":[
             p["comparison_ocr_mode"]["mode_disagreement"] if p["comparison_ocr_mode"] else None
             for p in report["pages"]

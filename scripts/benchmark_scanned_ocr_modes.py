@@ -20,6 +20,7 @@ import unicodedata
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"src"))
 from all2text.scanned_pdf_ocr_evidence import _word_records, _source_sha, _tesseract_binary_info
+from all2text.ocr_layout_candidates import two_column_candidate
 from PIL import Image,ImageDraw,ImageFont
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
@@ -100,7 +101,8 @@ def make_synthetic_pdf(path:Path, font_file:Path) -> dict:
     }
 
 
-def run_benchmark(output:Path, dpi_options:list[int], psm_options:list[int]) -> dict:
+def run_benchmark(output:Path, dpi_options:list[int], psm_options:list[int],
+                  *, evaluate_columns:bool=False) -> dict:
     if output.exists():
         raise ValueError("refuse to overwrite a previous synthetic OCR benchmark")
     if any(x not in (150,220,260) for x in dpi_options) or any(x not in (3,4,6,11) for x in psm_options):
@@ -160,12 +162,38 @@ def run_benchmark(output:Path, dpi_options:list[int], psm_options:list[int]) -> 
                     "raw_TSV_sha256":_source_sha(output/(name+".tsv")),
                     "elapsed_seconds":round(time.monotonic()-start,2),
                 }
+                if evaluate_columns:
+                    candidate=two_column_candidate(
+                        words=words,image_width=w,image_height=h,
+                    )
+                    alternate=candidate["text_candidate"]
+                    evaluation={
+                        "status":candidate["status"],
+                        "reason":candidate["reason"],
+                        "do_not_promote_to_native_filedb":True,
+                        "candidate_CER":None,
+                        "candidate_WER":None,
+                        "candidate_path":None,
+                        "candidate_sha256":None,
+                    }
+                    if alternate is not None:
+                        other=normalize(alternate)
+                        evaluation["candidate_CER"]=round(
+                            edit_distance(a,other)/max(1,len(a)),6)
+                        evaluation["candidate_WER"]=round(
+                            edit_distance(a.split(),other.split())/max(1,len(a.split())),6)
+                        q=output/(name+"_two_column_candidate.txt")
+                        q.write_text(alternate+"\n",encoding="utf-8")
+                        evaluation["candidate_path"]=q.name
+                        evaluation["candidate_sha256"]=_source_sha(q)
+                    result["column_order_evaluation"]=evaluation
                 runs.append(result)
                 print("MEASURE",result,flush=True)
     payload={
         "schema":"all2text.synthetic_ocr_cer_wer_benchmark.v1",
         "source":reference,"provider":provider,
         "psms_tested":psm_options,"dpis_tested":dpi_options,
+        "two_column_candidate_evaluated":evaluate_columns,
         "runs":runs,
         "limitations":[
             "Synthetic text-on-white pages are not representative of real scanned legislation or scientific figures",
@@ -184,8 +212,11 @@ def main():
     p.add_argument("--output",type=Path,required=True)
     p.add_argument("--dpi",action="append",type=int)
     p.add_argument("--psm",action="append",type=int)
+    p.add_argument("--evaluate-columns",action="store_true",
+                   help="Compare a separate unverified two-column candidate to independently known synthetic text")
     args=p.parse_args()
-    d=run_benchmark(args.output,args.dpi or [150,220],args.psm or [3,4,6,11])
+    d=run_benchmark(args.output,args.dpi or [150,220],args.psm or [3,4,6,11],
+                    evaluate_columns=args.evaluate_columns)
     print("BENCHMARK_RUNS",len(d["runs"]),"OUTPUT",args.output)
 
 

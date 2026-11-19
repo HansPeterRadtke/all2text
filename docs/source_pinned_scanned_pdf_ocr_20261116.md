@@ -170,3 +170,58 @@ as mixed reading-order/recognition disagreement and the synthetic
 regression case specifically prevents the prior false all-clear.
 Output is always untrusted machine OCR; this task does NOT claim
 verified legal text or full-document extraction.
+
+## November 19 continuation: separately hashed two-column order candidate
+
+The earlier real PDFs and synthetic two-column benchmark revealed that
+Tesseract's highly confident individual WORDS do not establish the correct
+reading ORDER. The prior source program exposed only the original PSM3 and
+alternate PSM4 text, whose ordering can differ significantly. A separate
+bounded, opt-in and **never authoritative** candidate is now available via
+`--propose-column-order`. Its implementation reuses the exact source-PDF
+SHA, original physical page/rotation and the same Tesseract TSV word and
+pixel bounding boxes as the primary OCR; it does not run an extra model or
+rewrite the primary transcript.
+
+It only proposes an ordering after at least two independent vertically
+overlapping and horizontally separated pairs of text lines corroborate
+two columns with stable starts, a real gap, and no cross-column text
+inside the two-column band. It conservatively sorts preceding full-width
+headers, left-column text, right-column text, and later full-width text
+such as a table. It preserves all original OCR words and their exact
+bounding boxes and separately saves a SHA-256-linked text candidate. If
+there is any ambiguous crossing, inconsistent column starts, too many
+lines or insufficient evidence, it **abstains**. It never changes the
+original-word-box TSV or source text and marks
+`do_not_promote_to_native_filedb=true`, even when the candidate looks good.
+
+Independent, model-free synthetic source-text acceptance used the existing
+two-page scan with known authored text, Tesseract versions and exact
+raster/TSV proofs. On the first, single-column page, the candidate correctly
+abstained and the original PSM3 already achieved zero CER/WER. On the
+second page, the initial PSM3 output put the table between the two columns,
+so it measured **35.29% character error** and **51.85% word error** against
+the authored source reading order. At both 150 and 220 DPI, an independently
+saved two-column candidate preserved the same OCR words but changed their
+sequence to achieve **zero CER and zero WER on this one synthetic page**.
+PSM11 also produced a near-exact alternative (0.31% CER), while PSM4/6
+abstained because they had interleaved lines that cannot safely be split
+from these boxes. Eight one-column combinations abstained; the original
+OCR was unchanged in all sixteen benchmark variants.
+
+The same optional candidate was applied to three real, original-revision-
+verified PDF pages: the rotated second page of the Philippine RA11232 law,
+and pages one and eight of the cloth-rendering paper. **All three
+abstained** for conflicting line geometry or inconsistent column origins.
+This is an intended conservative outcome. It would be false to claim that
+high-confidence legal text, scientific formulae, page captions or table
+cells have been repaired. A proper trained layout detector and independent
+source transcription are still needed before KMD indexing.
+
+The new generated receipts, including original source-map/FileDB identity,
+original-PDF SHA, independent synthetic ground truth, each primary text
+SHA, separate candidate SHA or explicit abstention reason, are under
+Raspi's private `search-audit/scanned-page-ocr-20261116/` directory,
+in the November 19-specific subfolders. No source originals or canonical
+FileDB records changed and both source-disjoint KMD summary workers ran
+throughout the test.

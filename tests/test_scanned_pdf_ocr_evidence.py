@@ -172,13 +172,14 @@ class SourcePinnedEndToEndOCRTests(unittest.TestCase):
         self.audit=self.root/"search-audit"
         self.audit.mkdir()
 
-    def call(self,*,psm=3,dpi=220,output=None,source_root=None,compare=None):
+    def call(self,*,psm=3,dpi=220,output=None,source_root=None,compare=None,propose=False):
         return extract_ocr_preview(
             source_root=source_root or self.corpus,relative_pdf_path=self.rel,
             approved_manifest=self.approved,completed_ledger=self.ledger,
             source_map_db=self.source_map,native_filedb=self.filedb,physical_pages=[1],
             output_dir=output or self.audit/f"psm{psm}_{dpi}",
             dpi=dpi,psm=psm,language="eng",comparison_psm=compare,
+            propose_column_order=propose,
         )
 
     def test_exact_original_identity_word_boxes_and_partial_scope(self):
@@ -273,6 +274,20 @@ class SourcePinnedEndToEndOCRTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"no unique canonical native"):
             self.call(output=target)
         self.assertFalse(target.exists())
+
+    def test_single_column_ocr_preview_abstains_instead_of_rewriting_text(self):
+        out=self.audit/"column_candidate_single_column"
+        report=self.call(output=out,propose=True)
+        row=report["pages"][0]
+        candidate=row["unverified_column_order_candidate"]
+        self.assertEqual("abstained",candidate["status"])
+        self.assertIsNone(candidate["candidate_path"])
+        self.assertIsNone(candidate["candidate_sha256"])
+        self.assertTrue(candidate["do_not_promote_to_native_filedb"])
+        self.assertTrue((out/"page_0001.txt").is_file())
+        self.assertFalse((out/"page_0001_two_column_candidate.txt").exists())
+        self.assertEqual(row["transcript_candidate_sha256"],
+                         hash_file(out/"page_0001.txt"))
 
     def test_source_revision_and_stale_catalog_fail_without_creating_result(self):
         before=self.digest

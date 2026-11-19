@@ -276,11 +276,13 @@ def extract_ocr_preview(
     native_filedb:Path,physical_pages:list[int], output_dir:Path,
     dpi:int=220, psm:int=3, language:str="eng",
     comparison_psm:int|None=None,
+    propose_column_order:bool=False,
 )->dict[str,Any]:
     from PIL import Image
     if (type(dpi) is not int or not 120<=dpi<=MAX_DPI
             or type(psm) is not int or psm not in VALID_PSM
             or language not in VALID_LANG
+            or type(propose_column_order) is not bool
             or (comparison_psm is not None
                 and (type(comparison_psm) is not int
                      or comparison_psm not in VALID_PSM
@@ -380,6 +382,28 @@ def extract_ocr_preview(
                 "independent_source_authenticity":False,
                 "different_OCR_not_ground_truth":True,
             }
+        column_order=None
+        if propose_column_order:
+            from all2text.ocr_layout_candidates import two_column_candidate
+            suggestion=two_column_candidate(
+                words=words,image_width=w,image_height=h,
+            )
+            candidate_text=suggestion.pop("text_candidate")
+            column_order={
+                **suggestion,
+                "candidate_path":None,
+                "candidate_sha256":None,
+                "comparison_to_primary":None,
+            }
+            if candidate_text is not None:
+                candidate=output/(f"{stem}_two_column_candidate.txt")
+                candidate.write_text(candidate_text+"\n",encoding="utf-8")
+                candidate.chmod(0o600)
+                column_order["candidate_path"]=candidate.name
+                column_order["candidate_sha256"]=_source_sha(candidate)
+                column_order["comparison_to_primary"]=_mode_agreement(
+                    plain,candidate_text,
+                )
         pages.append({
             "physical_pdf_page":num,"original_total_physical_pages":pages_in_original,
             "source_pdf_sha256":source["source_sha256"],
@@ -394,6 +418,7 @@ def extract_ocr_preview(
             "raw_tesseract_tsv_path":tsvpath.name,"raw_tesseract_tsv_sha256":_source_sha(tsvpath),
             "ocr_stats":stats,
             "comparison_ocr_mode":comparison,
+            "unverified_column_order_candidate":column_order,
             "evidence_scope":"unverified_local_OCR_candidate_from_source_pinned_physical_PDF_page",
             "do_not_promote_as_completed_original":True,
         })
@@ -405,6 +430,7 @@ def extract_ocr_preview(
         "canonical_native_filedb":native_link,
         "provider":provider,
         "ocr_comparison_psm":comparison_psm,
+        "column_order_candidate_requested":propose_column_order,
         "method":"bounded local image-only PDF OCR preview; not a verified transcript",
         "source_pdf_total_pages":pages_in_original,
         "physical_pages_processed":len(pages),

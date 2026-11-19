@@ -409,3 +409,11 @@ and records the current original entry ID and chunk count without
 creating or altering an index. A high OCR confidence cannot validate
 reading order: the compare mode flags discrepancies but never
 accepts either transcript as primary-source truth.
+
+A separate experimental `--propose-column-order` option can produce a
+source-pinned, SHA-checked **alternative** OCR text ordering when an
+unambiguous two-column geometry appears in the already generated TSV.
+It never replaces the original transcript, is not declared correct, and
+abstains on complex real scientific/legal pages with unclear geometry.
+The synthetic two-column improvement and limits are documented in the
+dated scanned PDF OCR research report.
