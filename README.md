@@ -331,3 +331,94 @@ A normal user does not need dependency extras. From a cloned repository, run `py
 ## MCP server
 
 all2text can also run as a local MCP 2026-07-28 tool server without changing the normal CLI. `all2text-mcp` (or `python -m all2text.mcp_server`) speaks newline-delimited MCP JSON-RPC over stdio and exposes `all2text_capabilities` and `all2text_convert`. The MCP layer deliberately delegates to the normal all2text CLI, so provider detection, OCR, document parsing, speech/model integrations, filesystem access, configuration, and manifests remain owned by all2text rather than by the consuming agent runtime.
+
+## Optional context-linked visual descriptions
+
+Images can receive a locally supplied, source-relative context record
+instead of relying only on a generic description prompt. Set the
+modules.image.source_context_manifest parameter in a TOML config to an
+absolute path outside both source and target trees. The JSON must use schema
+all2text.visual_context.v1 and map image input relative paths to full
+image_sha256, region_role, physical_page, document_topic, section_heading,
+figure_caption and nearby_text. The full image checksum must match before
+the topic/caption is used; rejected context is reported without modifying
+the original. A known full_document_page is routed as document layout rather
+than as an isolated chart; the original geometric guess remains in metadata.
+Provenance is limited to the verified image bytes; supplied topic/caption
+still requires independent upstream publisher/source verification. Model calls
+are disabled unless the existing provider auto_invoke flag is enabled.
+See docs/visual_context_pipeline_20261115.md for full details, tests and
+the follow-on model/diagram benchmark plan.
+
+### Optional offline CLIP image classifier
+
+The previously advertised image_classifier provider has an optional
+local CLIP ViT-B/32 CPU adapter. It is disabled by default and requires
+a model-capable run profile, enabled=true, auto_invoke=true and
+model_path set to a preexisting local model directory. The output
+records source classification, model/config/prompt hashes, cosine
+separation and uncertainty. Low-confidence candidates and unavailable
+models abstain rather than blindly activating chart extraction.
+Document pages with a verified external SHA-pinned full-page role
+must first go through document layout. This does not perform OCR,
+extract chart values or certify that an image is a photograph.
+See docs/offline_clip_technical_figure_routing_20261115.md.
+
+### Optional offline chart-to-table candidate after confirmed CLIP chart
+
+The local chart provider name deplot can be enabled separately,
+with existing local safetensors weights, explicit local font_path,
+auto_invoke=true and a model-capable profile. DePlot does not run
+unless the learned image classifier actually accepted a chart with
+adequate margin and the image is not a verified whole PDF page.
+No automatic model/font downloads or network requests are used.
+Model-generated numeric tables are marked unverified until checked
+against primary source data; see the detailed offline CLIP/DePlot
+routing report for the synthetic two-chart test and limitations.
+
+### Optional source-linked PDF figure crops
+
+The scripts/pdf_visual_regions.py command can produce small, private,
+SHA-linked region crops from approved completed PDFs. It records physical
+PDF pages, original and raster checksums, image rectangles in PDF points,
+crop bounds and nearby, explicitly heuristic extracted figure captions.
+Whole-page scanned bitmaps remain document pages instead of being
+mistaken for isolated charts. The generated visual_context.json can
+be used by All2Text with regions/ as the input tree. This stage only
+detects embedded raster figures; vector charts and page-layout
+semantics require a trained detector. It does not change originals
+or the KnowMoreDiRT database. Details:
+docs/source_verified_pdf_figure_regions_20261115.md
+
+### Bounded source-revision-verified OCR previews
+
+The optional scripts/source_pinned_scanned_ocr.py tool allows at most
+three physical pages of an already approved downloaded PDF whose
+canonical KnowMoreDiRT source-map explicitly marks it image-only and
+unextracted. It independently checks original SHA/size/receipt and
+read-only source-map SHA before running local, thread-bounded
+Tesseract on grayscale Poppler renders. It preserves original
+physical page, PDF rotation, raster/TSV/text/word-box hashes and
+the installed model data checksum, with explicit uncalibrated
+confidence and incomplete-source labels. Optional --compare-psm
+runs a second local page segmentation and flags differing reading
+order; it does not claim either text is correct. Existing source
+texts and native FileDB are untouched, and existing output folders
+are never replaced. See
+docs/source_pinned_scanned_pdf_ocr_20261116.md and
+scripts/benchmark_scanned_ocr_modes.py for measured tests and limits.
+
+The OCR preview also requires --filedb pointing to the existing KMD
+filesystem.sqlite3. It refuses ambiguous native original identities,
+and records the current original entry ID and chunk count without
+creating or altering an index. A high OCR confidence cannot validate
+reading order: the compare mode flags discrepancies but never
+accepts either transcript as primary-source truth.
+
+A separate experimental `--propose-column-order` option can produce a
+source-pinned, SHA-checked **alternative** OCR text ordering when an
+unambiguous two-column geometry appears in the already generated TSV.
+It never replaces the original transcript, is not declared correct, and
+abstains on complex real scientific/legal pages with unclear geometry.
+The synthetic two-column improvement and limits are documented in the
+dated scanned PDF OCR research report.

@@ -16,6 +16,11 @@ from all2text.providers import (
     provider_statuses,
 )
 from all2text.utils import read_header
+from all2text.visual_prompt import visual_prompt, verified_image_context
+from all2text.clip_routing import (
+    maybe_classify_local_clip, ROUTE_TAXONOMY,
+)
+from all2text.deplot_chart import maybe_deplot_chart
 
 
 class ImageAnalysisBackend:
@@ -50,6 +55,71 @@ class ImageAnalysisBackend:
 
         warnings = list(profile_warnings)
         methods = ["image_magic_metadata", "deterministic_image_profile", "provider_status_routing"]
+        source_context = None
+        source_context_state = {"status":"not_supplied"}
+        selected = ctx.source_context_map.get(rel_path.as_posix())
+        if selected is not None:
+            try:
+                source_context=verified_image_context(path,selected)
+                from hashlib import sha256
+                import json
+                # The checksum of the *supplied description* distinguishes
+                # different contextual revisions of the same raster.
+                contextual_bytes=json.dumps(
+                    source_context,ensure_ascii=False,sort_keys=True,separators=(",",":")
+                ).encode("utf-8")
+                source_context_state={
+                    "status":"sha256_verified_image_context",
+                    "image_sha256":selected["image_sha256"],
+                    "context_sha256":sha256(contextual_bytes).hexdigest(),
+                    "region_role":source_context.get("region_role","unknown"),
+                    "provenance_scope":"raster_bytes_verified; document captions and topic supplied by configured operator, not independently publisher-authenticated",
+                }
+                # A known complete page is not an isolated chart region.
+                # Keep the faulty geometry guess for auditability.
+                if source_context.get("region_role")=="full_document_page":
+                    profile["deterministic_taxonomy_before_context"]=profile.get("taxonomy")
+                    profile["taxonomy"]="document_page"
+                    profile["taxonomy_source"]="sha256_verified_full_document_page_context"
+                    profile["chart_candidate"]=False
+            except (ValueError,OSError) as error:
+                source_context_state={"status":"rejected_context_source_identity"}
+                warnings.append(f"visual_context_rejected:{type(error).__name__}:{error}")
+        classifier_provider = effective_provider(cfg, "image_classifier")
+        region_role = (source_context or {}).get("region_role", "standalone_image")
+        clip_result = maybe_classify_local_clip(
+            pil_image, provider=classifier_provider,
+            allow_models=ctx.options.allow_local_models,
+            region_role=region_role,
+        )
+        if clip_result.get("used"):
+            methods.append("offline_clip_zero_shot_routing")
+            profile["deterministic_taxonomy_before_clip"] = profile.get("taxonomy")
+            candidate = clip_result["accepted_route_class"]
+            profile["learned_candidate"] = clip_result["category_candidate"]
+            if candidate == "uncertain":
+                profile["taxonomy"] = "unknown"
+                profile["taxonomy_source"] = "clip_uncertain_abstention"
+                profile["chart_candidate"] = False
+                warnings.append("clip_uncertain:require specialist review or local VLM")
+            else:
+                profile["taxonomy"] = ROUTE_TAXONOMY[candidate]
+                profile["taxonomy_source"] = "clip_offline_local_uncalibrated"
+                profile["chart_candidate"] = candidate == "chart"
+                if candidate in {"photo", "render"}:
+                    warnings.append("clip_photo_or_render_label_is_not_authenticity_proof")
+        elif (classifier_provider.enabled and classifier_provider.name == "clip"
+              and classifier_provider.get("auto_invoke", False)
+              and ctx.options.allow_local_models
+              and region_role != "full_document_page"):
+            # An explicitly requested classifier that failed must not
+            # silently trigger a specialist chart parser through the much
+            # weaker color/line detector.
+            profile["deterministic_taxonomy_before_clip"] = profile.get("taxonomy")
+            profile["taxonomy"] = "unknown"
+            profile["taxonomy_source"] = "clip_failed_abstention"
+            profile["chart_candidate"] = False
+            warnings.append(str(clip_result.get("reason", "clip_failed")))
         ocr_provider = provider_with_tool_path(
             effective_provider(cfg, "ocr"),
             "tesseract_cmd",
@@ -74,6 +144,7 @@ class ImageAnalysisBackend:
             effective_provider(cfg, "vlm"),
             rel_path,
             profile,
+            source_context=source_context,
         )
         warnings.extend(vlm_warnings)
         vlm_used = bool(vlm_text)
@@ -88,6 +159,18 @@ class ImageAnalysisBackend:
             candidate=chart_candidate,
             ocr_result=ocr_result,
         )
+        chart_model=maybe_deplot_chart(
+            pil_image,
+            provider=effective_provider(cfg,"chart"),
+            allow_models=ctx.options.allow_local_models,
+            clip_result=clip_result,
+            region_role=region_role,
+        )
+        if chart_model.get("used"):
+            methods.append("offline_deplot_unverified_chart_to_table")
+            warnings.append("deplot_model_generated_values_not_verified")
+        elif chart_model.get("attempted") and chart_model.get("reason"):
+            warnings.append(str(chart_model["reason"]))
         document_hooks = {
             "document_intelligence": next((status.to_dict() for status in statuses if status.name == "document_intelligence"), None),
             "screenshot_or_document_candidate": route.family in {"document", "screenshot"},
@@ -108,8 +191,15 @@ class ImageAnalysisBackend:
         limitations = [
             "Image extraction is evidence/report oriented unless configured OCR, VLM, chart, or document providers return content."
         ]
-        if chart_candidate:
+        if chart_candidate and not chart_model.get("used"):
             limitations.append("Chart candidate detected from image/profile evidence, but no specialist chart values are fabricated.")
+        if chart_model.get("used"):
+            limitations.append("A chart-to-table candidate was generated by a model; no numeric chart cells or axes have independent primary-source verification.")
+            rendered += (
+                "\nUNVERIFIED MODEL-GENERATED CHART-TO-TABLE CANDIDATE "
+                "(not primary-source data; independently check every value):\n"
+                + str(chart_model["raw_generated_table_candidate"]) + "\n"
+            )
         if classification.concrete_format.upper() == "SVG" and bool(metadata.get("looks_text")):
             raw = path.read_bytes()
             svg_text, decode_meta, decode_warnings = decode_text_bytes(raw)
@@ -127,6 +217,9 @@ class ImageAnalysisBackend:
             metadata={
                 "image": image_metadata,
                 "profile": profile,
+                "source_context_evidence": source_context_state,
+                "image_classifier": clip_result,
+                "chart_model": chart_model,
                 "provider_statuses": [status.to_dict() for status in statuses],
                 "route": route.to_dict(),
                 "ocr": ocr_result,
@@ -681,6 +774,8 @@ def maybe_call_vlm(
     provider: Any,
     rel_path: Path,
     profile: dict[str, Any],
+    *,
+    source_context: dict[str, Any] | None = None,
 ) -> tuple[str | None, list[str], dict[str, Any]]:
     image_bytes = image_to_png_bytes(image) if image is not None else None
     mime_type = "image/png"
@@ -690,10 +785,8 @@ def maybe_call_vlm(
             mime_type = "image/svg+xml" if path.suffix.casefold() == ".svg" else "application/octet-stream"
         except Exception as exc:
             return None, [f"vlm_image_read_failed:{exc}"], {}
-    prompt = (
-        "Describe the image using only visible evidence. Report uncertainty. "
-        "If it is a chart, do not invent labels or values that are not visible. "
-        f"File label: {rel_path.as_posix()}. Deterministic profile: {profile.get('profile')}."
+    prompt = visual_prompt(
+        relative_path=rel_path, profile=profile, source_context=source_context,
     )
     return call_openai_compatible_vision(image_bytes, provider, prompt=prompt, mime_type=mime_type)
 

@@ -52,7 +52,24 @@ def run(
     text_entries = [entry for entry in entries if entry.produces_text]
     dir_map, directory_collisions = create_target_directories(target_root, dir_entries)
     planned, planning_warnings = reserve_output_files(target_root, text_entries, dir_map)
-    ctx = ConversionContext(source_root=source_root, target_root=target_root, options=options, config=config)
+    # Optional operator-controlled external context is never inferred from
+    # an image filename or an unrelated embedding search. Each record will be
+    # SHA-checked against the exact image bytes before supplying VLM hints.
+    context_manifest = config.module_params("image").get("source_context_manifest", "")
+    source_context_map = {}
+    if context_manifest:
+        from all2text.visual_prompt import load_source_context_manifest
+        context_path=Path(str(context_manifest)).expanduser()
+        # The context manifest is operator-only metadata, not a publisher
+        # source that may inadvertently be mirrored into output text.
+        if context_path.resolve().is_relative_to(source_root):
+            raise ValueError("visual source context manifest must be outside input tree")
+        if context_path.resolve().is_relative_to(target_root):
+            raise ValueError("visual source context manifest must be outside output tree")
+        source_context_map = load_source_context_manifest(context_path)
+    ctx = ConversionContext(source_root=source_root, target_root=target_root,
+                            options=options, config=config,
+                            source_context_map=source_context_map)
     registry = registry or build_default_registry(config)
     capabilities = capability_report(config)
     provider_status_list = [status.to_dict() for status in provider_statuses(config)]

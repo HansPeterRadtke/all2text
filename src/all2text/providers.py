@@ -393,6 +393,22 @@ def configured_candidate_status(
     elif not enabled:
         error = f"{name} provider disabled by config"
         available = False
+    elif name == "image_classifier" and provider.name == "clip":
+        # Distinguish actual locally runnable CLIP weights from the
+        # registry's speculative future models. No model is loaded here.
+        import importlib.util
+        from pathlib import Path
+        model_dir = Path(str(provider.get("model_path", "")))
+        deps = all(importlib.util.find_spec(mod) is not None
+                   for mod in ("torch", "transformers", "PIL"))
+        local_files = (
+            model_dir.is_dir() and not model_dir.is_symlink()
+            and (model_dir/"config.json").is_file()
+            and any((model_dir/file).is_file()
+                    for file in ("model.safetensors", "pytorch_model.bin"))
+        )
+        available = deps and local_files
+        error = None if available else "offline CLIP modules or local model files missing"
     else:
         candidate = next((item for item in PROVIDER_CANDIDATES if item.name == provider.name), None)
         if candidate is None:
@@ -457,6 +473,9 @@ def plan_image_route(
             providers.append("document_intelligence")
     elif family in {"diagram", "screenshot"}:
         primary_route = "technical_image_ocr_vlm_or_metadata"
+    elif family == "unknown":
+        primary_route = "uncertain_image_needs_visual_review_or_vlm"
+        fallback_reasons.append("learned image classifier abstained; do not route chart specialist")
     else:
         primary_route = "image_metadata_vlm_optional"
 
@@ -480,6 +499,9 @@ def plan_image_route(
 
 
 def image_family(image_profile: dict[str, Any], *, chart_candidate: bool) -> str:
+    if image_profile.get("taxonomy_source") in (
+            "clip_uncertain_abstention", "clip_failed_abstention"):
+        return "unknown"
     taxonomy = str(image_profile.get("taxonomy") or "").lower()
     if taxonomy == "chart_plot" or chart_candidate:
         return "chart"
@@ -487,6 +509,12 @@ def image_family(image_profile: dict[str, Any], *, chart_candidate: bool) -> str
         return "document"
     if taxonomy == "screenshot_ui":
         return "screenshot"
+    # A verified CLIP scene/render decision or an explicitly identified scene
+    # taxonomy must not be overturned by an older deterministic profile
+    # string such as "chart_like_lines". The accepted taxonomy outranks
+    # weak geometric fallback tags.
+    if taxonomy in {"photo_scene", "painting_illustration_art"}:
+        return "scene_or_photo"
     if taxonomy in {
         "diagram_flowchart_uml_network",
         "circuit_schematic",
@@ -716,13 +744,25 @@ def chart_status(provider: ProviderConfig, *, configured: ProviderConfig, profil
         error = f"chart specialist disabled by profile:{profile}"
     elif not enabled:
         error = "chart specialist disabled by config"
-    elif provider.name in {"deplot", "chartgemma", "unichart", "chartcoder", "chartocr"}:
+    elif provider.name == "deplot":
+        from pathlib import Path
         path = Path(model_path)
-        available = path.exists() and any((path / filename).exists() for filename in ("config.json", "model.safetensors", "pytorch_model.bin"))
-        error = None if available else f"chart model files not found at {path}"
-        if available:
-            error = f"{provider.name} execution adapter is not implemented in all2text core yet"
-            available = False
+        font = Path(str(provider.get("font_path", "")))
+        files = (
+            path.is_dir() and not path.is_symlink()
+            and (path/"config.json").is_file()
+            and (path/"model.safetensors").is_file()
+            and not (path/"model.safetensors").is_symlink()
+        )
+        font_ready = (font.is_file() and not font.is_symlink()
+                      and font.suffix.casefold() in (".ttf", ".otf"))
+        deps = all(importlib.util.find_spec(name) is not None
+                   for name in ("torch","transformers","PIL"))
+        available=files and font_ready and deps
+        error=None if available else "offline DePlot requires local model, explicit local font and Python dependencies"
+    elif provider.name in {"chartgemma", "unichart", "chartcoder", "chartocr"}:
+        error=f"{provider.name} execution adapter is not implemented in all2text core yet"
+        available=False
     else:
         error = f"chart provider is not implemented in all2text core: {provider.name}"
     return ProviderStatus(
@@ -738,6 +778,8 @@ def chart_status(provider: ProviderConfig, *, configured: ProviderConfig, profil
             "effective_enabled": enabled,
             "profile": profile,
             "embedded_images_enabled": bool(provider.get("embedded_images_enabled", False)),
+            "font_path": str(provider.get("font_path", "")),
+            "auto_invoke": bool(provider.get("auto_invoke", False)),
         },
         lifecycle=provider_lifecycle(
             configured=configured.enabled or configured.name != "none",
